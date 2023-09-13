@@ -1,0 +1,14 @@
+[workspace]
+members = ["attiny", "esp"]
+resolver = "2"
+
+[profile.dev]
+panic = "abort"
+lto = true
+debug-assertions = false
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+debug-assertions = false

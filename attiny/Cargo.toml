@@ -1,0 +1,22 @@
+cargo-features = ["per-package-target"]
+
+[package]
+name = "attiny"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+forced-target = "avr-attiny85.json"
+
+[[bin]]
+name = "attiny"
+test = false
+bench = false
+
+[dependencies]
+avr-device = "0.5.2"
+embedded-hal = "0.2.7"
+panic-halt = "0.2.0"
+
+[dependencies.attiny-hal]
+git = "https://github.com/rahix/avr-hal"
+features = ["rt", "attiny85"]
