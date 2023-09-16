@@ -2,13 +2,24 @@
 members = ["attiny", "esp"]
 resolver = "2"
 
+[workspace.dependencies]
+avr-device = "0.5.2"
+embedded-hal = "0.2.7"
+panic-halt = "0.2.0"
+attiny-hal = { git = "https://github.com/rahix/avr-hal", features = [
+    "rt",
+    "attiny85",
+] }
+
 [profile.dev]
 panic = "abort"
 lto = true
+opt-level = 3
 debug-assertions = false
 
 [profile.release]
 panic = "abort"
 codegen-units = 1
 lto = true
+opt-level = 3
 debug-assertions = false
