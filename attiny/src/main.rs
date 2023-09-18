@@ -2,6 +2,13 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
+// example https://github.com/eric-wood/rust-attiny85-example/blob/main/src/main.rs
+// hal https://rahix.github.io/avr-hal/attiny_hal/index.html
+// i2c https://github.com/Rahix/avr-hal/issues/301
+// sleep https://www.gadgetronicx.com/attiny85-sleep-modes-tutorial/
+// i2c intro https://www.gadgetronicx.com/attiny85-i2c-protocol-tutorial/
+// ads1x1x https://github.com/eldruin/ads1x1x-rs/tree/master
+
 use attiny_hal as hal;
 use panic_halt as _;
 
