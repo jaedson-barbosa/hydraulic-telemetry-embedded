@@ -7,8 +7,7 @@ use avr_hal_generic::i2c::{Direction, Error};
 
 use super::hal;
 
-type Speed = hal::clock::MHz1;
-pub type I2C = I2c<hal::port::PB0, hal::port::PB2, Speed>;
+pub type I2C = I2c<hal::port::PB0, hal::port::PB2, hal::clock::MHz1>;
 
 enum IoPin<Pin> {
     Input(hal::port::Pin<hal::port::mode::Input, Pin>),

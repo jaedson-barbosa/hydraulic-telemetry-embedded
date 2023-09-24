@@ -15,6 +15,7 @@ mod i2c_adc;
 use attiny_hal as hal;
 use hal::{port::Pin, prelude::*};
 use i2c::I2C;
+use i2c_adc::I2CADC;
 use panic_halt as _;
 
 // fn enable_interrupt(dp: &hal::Peripherals) {}
@@ -40,11 +41,11 @@ avr_hal_generic::renamed_pins! {
 }
 
 pub trait NumberWrite<const N: usize> {
-    fn write_str_number(&mut self, n: u32) -> Result<(), ()>;
+    fn write_str_number(&mut self, n: u16) -> Result<(), ()>;
 }
 
 impl<const N: usize> NumberWrite<N> for heapless::Vec<u8, N> {
-    fn write_str_number(&mut self, mut n: u32) -> Result<(), ()> {
+    fn write_str_number(&mut self, mut n: u16) -> Result<(), ()> {
         if n == 0 {
             return self.push(b'0').map_err(|_| ());
         }
@@ -64,25 +65,37 @@ fn main() -> ! {
     // enable_sleep(&dp);
 
     let pins = Pins::with_mcu_pins(hal::pins!(dp));
-    // let mut led = pins.led.into_output_high();
     let i2c_peripheral = dp.USI;
-    let mut i2c = I2C::with_external_pullup(i2c_peripheral, pins.i2c_sda, pins.i2c_scl);
-
-    // let mut i2c_adc = I2CADC::new(i2c);
-    // let read = i2c_adc.read_all();
+    let mut i2c: I2C = I2C::with_external_pullup(i2c_peripheral, pins.i2c_sda, pins.i2c_scl);
 
     let mut delay = hal::delay::Delay::<hal::clock::MHz1>::new();
     delay.delay_ms(1000u16);
-    let mut x = 0u32;
+    let mut x = 0u16;
+    let mut message = heapless::Vec::<u8, 50>::new();
+
     loop {
-        let mut message = heapless::Vec::<u8, 16>::new();
-        // let mut message: String<16> = String::new();
-        let _ = message.write_str("x is ");
+        let read = {
+            let mut i2c_adc = I2CADC::new(i2c);
+            let read = i2c_adc.read_all_mv();
+            i2c = i2c_adc.destroy();
+            read
+        };
+
+        message.clear();
+        let _ = message.extend_from_slice(b"values ");
         let _ = message.write_str_number(x);
-        let _ = message.write_str("\n");
-        // avr_device::asm::sleep();
+        let _ = message.extend_from_slice(b" and ");
+        let _ = message.write_str_number(read.a0);
+        let _ = message.push(b',');
+        let _ = message.write_str_number(read.a1);
+        let _ = message.push(b',');
+        let _ = message.write_str_number(read.a2);
+        let _ = message.push(b',');
+        let _ = message.write_str_number(read.a3);
+        let _ = message.push(b'\n');
         let _ = i2c.write(8, &message);
         x += 1;
-        delay.delay_ms(2000u16);
+        delay.delay_ms(1000u16);
+        // avr_device::asm::sleep();
     }
 }

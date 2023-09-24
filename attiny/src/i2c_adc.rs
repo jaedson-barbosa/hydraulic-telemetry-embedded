@@ -12,19 +12,20 @@ type Adc = ads1x1x::Ads1x1x<
 >;
 
 #[derive(Display, EnumIter)]
+#[repr(u8)]
 pub enum AnalogInput {
-    Pressure,
-    Generator,
-    Battery,
-    // RegulatorOutput,
+    A0,
+    A1,
+    A2,
+    A3
 }
 
 #[derive(Debug)]
 pub struct I2CADCRead {
-    pub pressure: f32,
-    pub generator: f32,
-    pub battery: f32,
-    // pub regulator_output: f32
+    pub a0: u16,
+    pub a1: u16,
+    pub a2: u16,
+    pub a3: u16,
 }
 
 pub struct I2CADC {
@@ -45,24 +46,30 @@ impl I2CADC {
         I2CADC { adc }
     }
 
-    pub fn read_single(&mut self, pin: AnalogInput) -> f32 {
-        let value = match pin {
-            AnalogInput::Pressure => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA0)).unwrap(),
-            AnalogInput::Generator => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA3)).unwrap(),
-            AnalogInput::Battery => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA2)).unwrap(),
-            // AnalogInput::RegulatorOutput => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA3)).unwrap(),
-        };
-        // println!("analog read: {value} from pin {pin}");
-        let float_value = (value as f32 * 0.1875) / 1000.0;
-        float_value
+    pub fn read_single_mv(&mut self, pin: AnalogInput) -> u16 {
+        let mut value = match pin {
+            AnalogInput::A0 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA0)).unwrap(),
+            AnalogInput::A1 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA1)).unwrap(),
+            AnalogInput::A2 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA2)).unwrap(),
+            AnalogInput::A3 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA3)).unwrap(),
+        } as i32;
+        if value < 0 {
+            value = 0;
+        }
+        let float_value = value * 3 / 16;
+        float_value as u16
     }
 
-    pub fn read_all(&mut self) -> I2CADCRead {
+    pub fn read_all_mv(&mut self) -> I2CADCRead {
         I2CADCRead {
-            pressure: self.read_single(AnalogInput::Pressure),
-            generator: self.read_single(AnalogInput::Generator),
-            battery: self.read_single(AnalogInput::Battery),
-            // regulator_output: self.read_single(AnalogInput::RegulatorOutput)
+            a0: self.read_single_mv(AnalogInput::A0),
+            a1: self.read_single_mv(AnalogInput::A1),
+            a2: self.read_single_mv(AnalogInput::A2),
+            a3: self.read_single_mv(AnalogInput::A3),
         }
+    }
+
+    pub fn destroy(self) -> I2C {
+        self.adc.destroy_ads1115()
     }
 }
