@@ -88,16 +88,21 @@ checksum = "1181e1e0d1fce796a03db1ae795d67167da795f9cf4a39c37589e85ef57f26d3"
 name = "attiny"
 version = "0.1.0"
 dependencies = [
+ "ads1x1x",
  "attiny-hal",
  "avr-device",
+ "avr-hal-generic",
  "embedded-hal 0.2.7",
+ "heapless",
+ "nb 1.1.0",
  "panic-halt",
+ "strum 0.25.0",
 ]
 
 [[package]]
 name = "attiny-hal"
 version = "0.1.0"
-source = "git+https://github.com/rahix/avr-hal#7b3e82a15e97e657559ec82cf934ba36c38312ec"
+source = "git+https://github.com/rahix/avr-hal?rev=7b3e82a15e97e657559ec82cf934ba36c38312ec#7b3e82a15e97e657559ec82cf934ba36c38312ec"
 dependencies = [
  "avr-device",
  "avr-hal-generic",
@@ -135,7 +140,7 @@ dependencies = [
 [[package]]
 name = "avr-hal-generic"
 version = "0.1.0"
-source = "git+https://github.com/rahix/avr-hal#7b3e82a15e97e657559ec82cf934ba36c38312ec"
+source = "git+https://github.com/rahix/avr-hal?rev=7b3e82a15e97e657559ec82cf934ba36c38312ec#7b3e82a15e97e657559ec82cf934ba36c38312ec"
 dependencies = [
  "avr-device",
  "cfg-if 0.1.10",

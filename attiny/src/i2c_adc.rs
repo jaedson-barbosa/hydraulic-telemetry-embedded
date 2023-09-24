@@ -1,15 +1,11 @@
-// generalize based on https://github.com/lopsided98/acurite-thermometer/blob/main/acurite-thermometer/src/tmp102.rs
-
 use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
-use hal::{
-    i2c::I2C,
-    peripherals::I2C0,
-    prelude::*,
-};
+use embedded_hal::prelude::*;
 use strum::{Display, EnumIter};
 
+use crate::i2c::I2C;
+
 type Adc = ads1x1x::Ads1x1x<
-    ads1x1x::interface::I2cInterface<I2C<'static, I2C0>>,
+    ads1x1x::interface::I2cInterface<I2C>,
     ads1x1x::ic::Ads1115,
     ads1x1x::ic::Resolution16Bit,
     ads1x1x::mode::OneShot,
@@ -36,10 +32,10 @@ pub struct I2CADC {
 }
 
 impl I2CADC {
-    pub fn new(i2c: I2C<'static, I2C0>) -> Self {
+    pub fn new(i2c: I2C) -> Self {
         let address = SlaveAddr::default();
         let mut adc: ads1x1x::Ads1x1x<
-            ads1x1x::interface::I2cInterface<I2C<'_, I2C0>>,
+            ads1x1x::interface::I2cInterface<I2C>,
             ads1x1x::ic::Ads1115,
             ads1x1x::ic::Resolution16Bit,
             ads1x1x::mode::OneShot,

@@ -31,7 +31,7 @@ rustflags = [
 ]
 
 [target.'cfg(target_arch = "avr")']
-runner = "sh runner.sh"
+runner = "powershell .\\runner.ps1"
 
 [build]
 target = ["riscv32imc-unknown-none-elf","avr-attiny85.json"]
