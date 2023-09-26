@@ -20,5 +20,5 @@ avr-hal-generic.workspace = true
 ads1x1x.workspace = true
 strum.workspace = true
 nb.workspace = true
-heapless = {version="0.7.16", default-features = false}
-# core2 = {version = "0.4.0", default-features = false}
+heapless = { version = "0.7.16", default-features = false }
+thiserror = { version = "1.0.38", package = "thiserror-core", default-features = false }

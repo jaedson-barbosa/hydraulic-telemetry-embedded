@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(abi_avr_interrupt)]
+#![feature(error_in_core)]
 
 // example https://github.com/eric-wood/rust-attiny85-example/blob/main/src/main.rs
 // hal https://rahix.github.io/avr-hal/attiny_hal/index.html
@@ -10,6 +11,7 @@
 // ads1x1x https://github.com/eldruin/ads1x1x-rs/tree/master
 
 mod i2c;
+mod wire;
 use core::fmt::Write;
 mod i2c_adc;
 use attiny_hal as hal;
