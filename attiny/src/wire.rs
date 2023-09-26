@@ -1,30 +1,9 @@
 use attiny_hal as hal;
 use avr_hal_generic::i2c::Direction;
-use core::sync::atomic::AtomicBool;
 use hal::{clock::MHz1, delay::Delay, prelude::*};
 
-// 1,2,4,8,16,32,64,128 or 256 bytes are allowed buffer sizes
-const TWI_RX_BUFFER_SIZE: usize = 16;
-const TWI_RX_BUFFER_MASK: usize = TWI_RX_BUFFER_SIZE - 1;
-
-const TWI_TX_BUFFER_SIZE: usize = 16;
-const TWI_TX_BUFFER_MASK: usize = TWI_TX_BUFFER_SIZE - 1;
-
-const TWI_BUFFER_SIZE: usize = TWI_RX_BUFFER_SIZE + TWI_TX_BUFFER_SIZE;
-
-const USI_SLAVE_CHECK_ADDRESS: u16 = 0x00;
-const USI_SLAVE_SEND_DATA: u16 = 0x01;
-const USI_SLAVE_REQUEST_REPLY_FROM_SEND_DATA: u16 = 0x02;
-const USI_SLAVE_CHECK_REPLY_FROM_SEND_DATA: u16 = 0x03;
-const USI_SLAVE_REQUEST_DATA: u16 = 0x04;
-const USI_SLAVE_GET_DATA_AND_SEND_ACK: u16 = 0x05;
-
-const TWI_READ_BIT: u8 = 0; // Bit position for R/W bit in "address byte".
-const TWI_ADR_BITS: u8 = 1; // Bit position for LSB of the slave address bits in the init byte.
-const TWI_NACK_BIT: u8 = 0; // Bit position for (N)ACK bit.
-
 #[derive(thiserror::Error, Debug)]
-enum UsiError {
+pub enum UsiError {
     #[error("Generated Stop Condition not detected on bus")]
     UsiTwiMissingStopCon,
     #[error("Generated Start Condition not detected on bus")]
@@ -35,7 +14,7 @@ enum UsiError {
     UsiTwiNoAckOnData,
 }
 
-enum IoPin<Pin> {
+pub enum IoPin<Pin> {
     Input(hal::port::Pin<hal::port::mode::Input, Pin>),
     Output(hal::port::Pin<hal::port::mode::Output, Pin>),
     None,
@@ -45,18 +24,6 @@ impl<Pin> IoPin<Pin>
 where
     Pin: hal::port::PinOps,
 {
-    #[inline]
-    pub fn to_floating_input(&mut self) -> &mut hal::port::Pin<hal::port::mode::Input, Pin> {
-        *self = match core::mem::replace(self, Self::None) {
-            Self::Output(pin) => Self::Input(pin.into_floating_input().forget_imode()),
-            s => s,
-        };
-        match self {
-            Self::Input(pin) => pin,
-            _ => unreachable!(),
-        }
-    }
-
     #[inline]
     pub fn as_pull_up_input(&mut self) -> &mut hal::port::Pin<hal::port::mode::Input, Pin> {
         *self = match core::mem::replace(self, Self::None) {
@@ -73,6 +40,7 @@ where
     pub fn as_output(&mut self) -> &mut hal::port::Pin<hal::port::mode::Output, Pin> {
         *self = match core::mem::replace(self, Self::None) {
             Self::Input(pin) => Self::Output(pin.into_output()),
+            Self::Output(pin) => Self::Output(pin.into_output()),
             s => s,
         };
         match self {
@@ -85,6 +53,7 @@ where
     pub fn as_output_high(&mut self) -> &mut hal::port::Pin<hal::port::mode::Output, Pin> {
         *self = match core::mem::replace(self, Self::None) {
             Self::Input(pin) => Self::Output(pin.into_output_high()),
+            Self::Output(pin) => Self::Output(pin.into_output_high()),
             s => s,
         };
         match self {
@@ -92,9 +61,17 @@ where
             _ => unreachable!(),
         }
     }
+
+    pub fn is_low(&self) -> bool {
+        match self {
+            Self::Input(v) => v.is_low(),
+            Self::Output(v) => v.is_set_low(),
+            _ => false,
+        }
+    }
 }
 
-enum SlavePollEvent {
+pub enum SlavePollEvent {
     None,
 
     /// Emitted when the I2C controller addresses us in read mode.
@@ -104,24 +81,23 @@ enum SlavePollEvent {
     StartWrite,
 }
 
-enum SlaveWriteResult {
+pub enum SlaveWriteResult {
     Stop,
     Continue,
 }
 
-enum SlaveReadResult {
+pub enum SlaveReadResult {
     Stop(u8),
     Continue(u8),
 }
 
 pub struct TwoWire {
-    address: Option<u8>,
-    fast_mode: bool,
-    delay: Delay<MHz1>,
-    pinb: hal::pac::portb::PINB,
-    usi: hal::pac::USI,
-    sda: IoPin<hal::port::PB0>,
-    scl: IoPin<hal::port::PB2>,
+    pub address: Option<u8>,
+    pub fast_mode: bool,
+    pub delay: Delay<MHz1>,
+    pub usi: hal::pac::USI,
+    pub sda: IoPin<hal::port::PB0>,
+    pub scl: IoPin<hal::port::PB2>,
 }
 
 impl TwoWire {
@@ -132,7 +108,7 @@ impl TwoWire {
 
     fn delay_t4twi(&mut self) {
         let time = if self.fast_mode { 1u8 } else { 4u8 };
-        self.delay.delay_us(4u8);
+        self.delay.delay_us(time);
     }
 
     fn usi_twi_master_initialize(&mut self) {
@@ -143,7 +119,7 @@ impl TwoWire {
         // i2c uses two_wire_slave
         usi.usicr.write(|w| {
             w.usiwm()
-                .two_wire_master()
+                .two_wire_slave()
                 .usics()
                 .ext_pos()
                 .usiclk()
@@ -165,7 +141,7 @@ impl TwoWire {
         self.usi.usicr.write(|w| {
             // Set USI in Two-wire mode. Method is incorrectly named.
             w.usiwm()
-                .two_wire_master()
+                .two_wire_slave()
                 // Software stobe as counter clock source
                 .usics()
                 .ext_pos()
@@ -178,7 +154,7 @@ impl TwoWire {
     }
 
     fn wait_scl_go_high(&self) {
-        while self.pinb.read().pb2().bit_is_clear() {}
+        while self.scl.is_low() {}
     }
 
     fn usi_overflow_not_detected(&self) -> bool {
@@ -212,7 +188,7 @@ impl TwoWire {
         data
     }
 
-    fn usi_twi_master_stop(&mut self) -> Result<(), UsiError> {
+    fn raw_stop(&mut self) -> Result<(), UsiError> {
         self.sda.as_output();
         self.scl.as_output_high();
         self.wait_scl_go_high();
@@ -229,16 +205,7 @@ impl TwoWire {
         self.usi.usisr.read().usisif().bit_is_clear()
     }
 
-    fn usi_twi_start_transceiver_with_data_stop(
-        &mut self,
-        msg: &[u8],
-        msg_size: usize,
-        send_stop: bool,
-    ) -> Result<[u8; TWI_BUFFER_SIZE], UsiError> {
-        let mut input_msg = [0u8; TWI_BUFFER_SIZE];
-
-        let mut address_mode = true;
-        let master_write_data_mode = msg[0] & 0b1 == 0;
+    fn raw_start(&mut self, address: u8, direction: Direction) -> Result<(), UsiError> {
         self.scl.as_output_high();
         self.wait_scl_go_high();
         self.delay_t4twi();
@@ -246,41 +213,63 @@ impl TwoWire {
         self.delay_t4twi();
         self.scl.as_output();
         self.sda.as_output_high();
-
         if self.start_condition_not_detected() {
             return Err(UsiError::UsiTwiMissingStartCon);
         }
+        self.raw_write_bits((address << 1) | direction as u8)
+            .map_err(|_| UsiError::UsiTwiNoAckOnAddress)
+    }
 
-        // Write address and Read/Write data
-        for index in 0..msg_size {
-            if address_mode || master_write_data_mode {
-                self.scl.as_output();
-                self.usi.usidr.write(|w| w.bits(msg[index]));
-                self.usi_twi_master_transfer(8);
-                self.sda.as_pull_up_input();
-                if self.usi_twi_master_transfer(1) & 0b1 != 0 {
-                    return Err(match address_mode {
-                        true => UsiError::UsiTwiNoAckOnAddress,
-                        false => UsiError::UsiTwiNoAckOnData,
-                    });
-                }
-                address_mode = false;
-            } else {
-                self.sda.as_pull_up_input();
-                input_msg[index - 1] = self.usi_twi_master_transfer(8);
-                let last = index == msg_size - 1;
-                self.usi
-                    .usidr
-                    .write(|w| w.bits(if last { 0xFF } else { 0x00 }));
-                self.usi_twi_master_transfer(1);
-            }
+    fn raw_write_bits(&mut self, data: u8) -> Result<(), UsiError> {
+        // self.scl.as_output();
+        self.sda.as_output_high();
+        self.usi.usidr.write(|w| w.bits(data));
+        self.usi_twi_master_transfer(8);
+        self.sda.as_pull_up_input();
+        if self.usi_twi_master_transfer(1) & 0b1 != 0 {
+            Err(UsiError::UsiTwiNoAckOnData)
+        } else {
+            Ok(())
         }
+    }
 
-        if send_stop {
-            self.usi_twi_master_stop()?;
+    fn raw_read_bits(&mut self, address: u8, last: bool) -> u8 {
+        self.sda.as_pull_up_input();
+        let data = self.usi_twi_master_transfer(8);
+        self.usi
+            .usidr
+            .write(|w| w.bits(if last { 0xFF } else { 0x00 }));
+        self.usi_twi_master_transfer(1);
+        data
+    }
+
+    pub fn begin(&mut self, address: Option<u8>) {
+        self.address = address;
+        match address {
+            Some(v) => self.usi_twi_slave_initialize(),
+            None => self.usi_twi_master_initialize(),
+        };
+    }
+
+    pub fn request_from<const N: usize>(&mut self, address: u8) -> Result<[u8; N], UsiError> {
+        let mut input_msg = [0u8; N];
+        self.raw_start(address, Direction::Read)?;
+        for index in 0..N {
+            let last = index == N - 1;
+            input_msg[index] = self.raw_read_bits(address, last);
         }
-
+        self.raw_stop()?;
         Ok(input_msg)
+    }
+
+    /// put 0 on first byte of msg
+    pub fn write(&mut self, address: u8, msg: &[u8]) -> Result<(), UsiError> {
+        self.raw_start(address, Direction::Write)?;
+        for data in msg {
+            self.raw_write_bits(*data)?;
+        }
+        self.raw_stop()?;
+        Ok(())
     }
 
     fn usi_twi_slave_initialize(&mut self) {
@@ -306,42 +295,6 @@ impl TwoWire {
         self.sda.as_pull_up_input();
         self.usi.usicr.write(|w| w);
         self.usi.usisr.write(|w| unsafe { w.bits(0xF0) })
-    }
-
-    pub fn begin(&mut self, address: Option<u8>) {
-        self.address = address;
-        match address {
-            Some(v) => self.usi_twi_slave_initialize(),
-            None => self.usi_twi_master_initialize(),
-        };
-    }
-
-    // TODO replace quantity and TWI_BUFFER_SIZE by generic param const N: usize
-    pub fn request_from(
-        &mut self,
-        address: u8,
-        quantity: usize,
-        send_stop: Option<bool>,
-    ) -> Result<[u8; TWI_BUFFER_SIZE], UsiError> {
-        let out_msg = [(address << TWI_ADR_BITS) | (0b1)];
-        let in_msg = self.usi_twi_start_transceiver_with_data_stop(
-            &out_msg,
-            quantity,
-            send_stop.unwrap_or(true),
-        )?;
-        Ok(in_msg)
-    }
-
-    /// put 0 on first byte of msg
-    pub fn master_write(
-        &mut self,
-        address: u8,
-        msg: &mut [u8],
-        send_stop: Option<bool>,
-    ) -> Result<(), UsiError> {
-        msg[0] = address << TWI_ADR_BITS;
-        self.usi_twi_start_transceiver_with_data_stop(msg, msg.len(), send_stop.unwrap_or(true))?;
-        Ok(())
     }
 
     // TODO change to basic polling (or maybe async)
