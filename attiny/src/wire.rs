@@ -1,6 +1,6 @@
 use attiny_hal as hal;
 use avr_hal_generic::i2c::Direction;
-use hal::{clock::MHz1, delay::Delay, prelude::*};
+use hal::{clock::MHz1, delay::Delay, port::Pin, prelude::*};
 
 #[derive(thiserror::Error, Debug)]
 pub enum UsiError {
@@ -81,14 +81,20 @@ pub enum SlavePollEvent {
     StartWrite,
 }
 
+#[derive(PartialEq)]
 pub enum SlaveWriteResult {
     Stop,
     Continue,
 }
 
 pub enum SlaveReadResult {
-    Stop(u8),
+    Stop(Option<u8>),
     Continue(u8),
+}
+
+enum WaitResult {
+    Stop,
+    Continue,
 }
 
 pub struct TwoWire {
@@ -98,6 +104,7 @@ pub struct TwoWire {
     pub usi: hal::pac::USI,
     pub sda: IoPin<hal::port::PB0>,
     pub scl: IoPin<hal::port::PB2>,
+    pub led: Pin<hal::port::mode::Output, hal::port::PB3>,
 }
 
 impl TwoWire {
@@ -159,6 +166,19 @@ impl TwoWire {
 
     fn usi_overflow_not_detected(&self) -> bool {
         self.usi.usisr.read().usioif().bit_is_clear()
+    }
+
+    fn wait_usi_overflow(&self) -> WaitResult {
+        loop {
+            let usisr = self.usi.usisr.read();
+            if usisr.usipf().bit_is_set() {
+                return WaitResult::Stop;
+            }
+            if usisr.usioif().bit_is_set() {
+                break;
+            }
+        }
+        WaitResult::Continue
     }
 
     fn usi_twi_master_transfer(&mut self, bits: u8) -> u8 {
@@ -233,7 +253,7 @@ impl TwoWire {
         }
     }
 
-    fn raw_read_bits(&mut self, address: u8, last: bool) -> u8 {
+    fn raw_read_bits(&mut self, last: bool) -> u8 {
         self.sda.as_pull_up_input();
         let data = self.usi_twi_master_transfer(8);
         self.usi
@@ -246,7 +266,7 @@ impl TwoWire {
     pub fn begin(&mut self, address: Option<u8>) {
         self.address = address;
         match address {
-            Some(v) => self.usi_twi_slave_initialize(),
+            Some(_) => self.usi_twi_slave_initialize(),
             None => self.usi_twi_master_initialize(),
         };
     }
@@ -256,7 +276,7 @@ impl TwoWire {
         self.raw_start(address, Direction::Read)?;
         for index in 0..N {
             let last = index == N - 1;
-            input_msg[index] = self.raw_read_bits(address, last);
+            input_msg[index] = self.raw_read_bits(last);
         }
         self.raw_stop()?;
         Ok(input_msg)
@@ -273,17 +293,15 @@ impl TwoWire {
     }
 
     fn usi_twi_slave_initialize(&mut self) {
-        self.scl.as_pull_up_input();
+        self.scl.as_output_high();
         self.sda.as_pull_up_input();
         self.usi.usicr.write(|w| {
-            w.usisie()
-                .set_bit()
-                .usioie()
-                .set_bit()
-                .usiwm()
+            w.usiwm()
                 .two_wire_slave()
                 .usics()
                 .ext_pos()
+                .usiclk()
+                .clear_bit()
         });
         // Clear all flags and reset overflow counter
         // TODO replace by safe methods
@@ -293,19 +311,39 @@ impl TwoWire {
     fn slave_end(&mut self) {
         self.scl.as_pull_up_input();
         self.sda.as_pull_up_input();
-        self.usi.usicr.write(|w| w);
+        self.usi.usicr.write(|w| unsafe { w.bits(0x00) });
         self.usi.usisr.write(|w| unsafe { w.bits(0xF0) })
     }
 
     // TODO change to basic polling (or maybe async)
     pub fn slave_poll(&mut self) -> SlavePollEvent {
         while self.start_condition_not_detected() {}
-        self.usi_twi_slave_initialize();
+        self.usi.usicr.write(|w| {
+            w.usiwm()
+                .two_wire_master()
+                .usics()
+                .ext_pos()
+                .usiclk()
+                .clear_bit()
+                .usitc()
+                .clear_bit()
+        });
+        self.usi.usisr.write(|w| {
+            w.usisif()
+                .set_bit()
+                .usioif()
+                .set_bit()
+                .usipf()
+                .set_bit()
+                .usicnt()
+                .bits(0)
+        });
         // check address
         while self.usi_overflow_not_detected() {}
         let data = self.usi.usidr.read().bits();
         if self.address.unwrap() == data >> 1 {
             self.set_usi_to_send_ack();
+            while self.usi_overflow_not_detected() {}
             if data & 0x01 == 1 {
                 SlavePollEvent::StartWrite
             } else {
@@ -317,9 +355,17 @@ impl TwoWire {
         }
     }
 
-    pub fn slave_write(&mut self, data: u8) -> SlaveWriteResult {
-        self.usi.usidr.write(|w| w.bits(data));
-        self.set_usi_to_send_data();
+    pub fn slave_write(&mut self, data: Option<u8>) -> SlaveWriteResult {
+        match data {
+            Some(v) => {
+                self.usi.usidr.write(|w| w.bits(v));
+                self.set_usi_to_send_data();
+            }
+            None => {
+                self.set_usi_to_send_nack();
+                return SlaveWriteResult::Stop;
+            }
+        };
         while self.usi_overflow_not_detected() {}
         self.set_usi_to_read_ack();
         while self.usi_overflow_not_detected() {}
@@ -335,65 +381,107 @@ impl TwoWire {
 
     pub fn slave_read(&mut self) -> SlaveReadResult {
         self.set_usi_to_read_data();
-        while self.usi_overflow_not_detected() {}
+        match self.wait_usi_overflow() {
+            WaitResult::Stop => return SlaveReadResult::Stop(None),
+            WaitResult::Continue => {}
+        };
         let data = self.usi.usidr.read().bits();
         self.set_usi_to_send_ack();
-        let usisr = self.usi.usisr.read();
-        while usisr.usisif().bit_is_clear()
-            || usisr.usipf().bit_is_clear()
-            || usisr.usioif().bit_is_clear()
-        {}
-        if usisr.usipf().bit_is_set() {
-            SlaveReadResult::Stop(data)
-        } else {
-            SlaveReadResult::Continue(data)
+        match self.wait_usi_overflow() {
+            WaitResult::Stop => SlaveReadResult::Stop(Some(data)),
+            WaitResult::Continue => SlaveReadResult::Continue(data),
         }
     }
 
     fn set_usi_to_send_ack(&mut self) {
         self.usi.usidr.write(|w| w.bits(0));
         self.sda.as_output();
-        self.usi
-            .usisr
-            .write(|w| w.usioif().set_bit().usipf().set_bit().usicnt().bits(0x0E));
+        self.usi.usisr.write(|w| {
+            w.usisif()
+                .clear_bit()
+                .usioif()
+                .set_bit()
+                .usipf()
+                .set_bit()
+                .usicnt()
+                .bits(0x0E)
+        });
+    }
+
+    fn set_usi_to_send_nack(&mut self) {
+        self.sda.as_pull_up_input();
+        self.usi.usisr.write(|w| {
+            w.usisif()
+                .clear_bit()
+                .usioif()
+                .set_bit()
+                .usipf()
+                .set_bit()
+                .usicnt()
+                .bits(0x0E)
+        });
     }
 
     fn set_usi_to_read_ack(&mut self) {
         self.sda.as_pull_up_input();
         self.usi.usidr.write(|w| w.bits(0));
-        self.usi
-            .usisr
-            .write(|w| w.usioif().set_bit().usipf().set_bit().usicnt().bits(0x0E));
+        self.usi.usisr.write(|w| {
+            w.usisif()
+                .clear_bit()
+                .usioif()
+                .set_bit()
+                .usipf()
+                .set_bit()
+                .usicnt()
+                .bits(0x0E)
+        });
     }
 
     fn set_usi_to_twi_start_condition_mode(&mut self) {
         self.sda.as_pull_up_input();
         self.usi.usicr.write(|w| {
-            w.usisie()
-                .set_bit()
-                .usioie()
-                .set_bit()
-                .usiwm()
+            w.usiwm()
                 .two_wire_slave()
                 .usics()
                 .ext_pos()
+                .usiclk()
+                .clear_bit()
         });
-        self.usi
-            .usisr
-            .write(|w| w.usioif().set_bit().usipf().set_bit().usicnt().bits(0));
+        self.usi.usisr.write(|w| {
+            w.usisif()
+                .clear_bit()
+                .usioif()
+                .set_bit()
+                .usipf()
+                .set_bit()
+                .usicnt()
+                .bits(0)
+        });
     }
 
     fn set_usi_to_send_data(&mut self) {
-        self.sda.as_output();
-        self.usi
-            .usisr
-            .write(|w| w.usioif().set_bit().usipf().set_bit().usicnt().bits(0));
+        self.sda.as_output_high(); // maybe high
+        self.usi.usisr.write(|w| {
+            w.usioif()
+                .set_bit()
+                .usipf()
+                .set_bit()
+                .usicnt()
+                .bits(0)
+        });
     }
 
     fn set_usi_to_read_data(&mut self) {
         self.sda.as_pull_up_input();
-        self.usi
-            .usisr
-            .write(|w| w.usioif().set_bit().usipf().set_bit().usicnt().bits(0));
+        self.usi.usisr.write(|w| {
+            w.usisif()
+                .clear_bit()
+                .usioif()
+                .set_bit()
+                .usipf()
+                .set_bit()
+                .usicnt()
+                .bits(0)
+        });
     }
 }

@@ -19,7 +19,7 @@ use hal::{port::Pin, prelude::*};
 use i2c::I2C;
 use i2c_adc::I2CADC;
 use panic_halt as _;
-use wire::{TwoWire, IoPin};
+use wire::{IoPin, SlavePollEvent, TwoWire};
 
 // fn enable_interrupt(dp: &hal::Peripherals) {}
 
@@ -36,10 +36,10 @@ avr_hal_generic::renamed_pins! {
 
     pub struct Pins from hal::Pins {
         pub pb1: hal::port::PB1 = pb1,
-        pub random: hal::port::PB3 = pb3,
+        pub led1: hal::port::PB3 = pb3,
         pub i2c_sda: hal::port::PB0 = pb0,
         pub i2c_scl: hal::port::PB2 = pb2,
-        pub led: hal::port::PB4 = pb4,
+        pub led2: hal::port::PB4 = pb4,
     }
 }
 
@@ -75,7 +75,8 @@ fn main() -> ! {
         fast_mode: false,
         usi: i2c_peripheral,
         scl: IoPin::Input(pins.i2c_scl.forget_imode()),
-        sda: IoPin::Input(pins.i2c_sda.forget_imode())
+        sda: IoPin::Input(pins.i2c_sda.forget_imode()),
+        led: pins.led1.into_output_high()
     };
     // let mut i2c: I2C = I2C::with_external_pullup(i2c_peripheral, pins.i2c_sda, pins.i2c_scl);
 
@@ -83,8 +84,9 @@ fn main() -> ! {
     delay.delay_ms(1000u16);
     let mut x = 0u16;
     // let mut message = heapless::Vec::<u8, 50>::new();
-    i2c.begin(None);
+    i2c.begin(Some(8));
 
+    let mut last_value = 33;
     loop {
         // let read = {
         //     let mut i2c_adc = I2CADC::new(i2c);
@@ -105,12 +107,36 @@ fn main() -> ! {
         // let _ = message.push(b',');
         // let _ = message.write_str_number(read.a3);
         // let _ = message.push(b'\n');
-        let mut msg = [33u8; 6];
+        match i2c.slave_poll() {
+            SlavePollEvent::StartRead => loop {
+                let data = i2c.slave_read();
+                match data {
+                    wire::SlaveReadResult::Stop(v) => match v {
+                        Some(v) => last_value = v,
+                        None => last_value = 33
+                    }
+                    wire::SlaveReadResult::Continue(v) => {
+                        last_value = v;
+                        break;
+                    }
+                }
+            },
+            SlavePollEvent::StartWrite => loop {
+                let result = i2c.slave_write(Some(33));
+                if result == wire::SlaveWriteResult::Stop {
+                    break;
+                }
+            },
+            SlavePollEvent::None => {
+                
+            }
+        }
+        // let mut msg = [33u8; 6];
         // let mut msg = b"x is \n";
-        msg[..2].copy_from_slice(b"OK");
-        msg[msg.len() - 1] = b'\n';
-        let _ = i2c.write(8, &mut msg);
-        
+        // msg[..2].copy_from_slice(b"OK");
+        // msg[msg.len() - 1] = b'\n';
+        // let _ = i2c.write(8, &mut msg);
+
         x += 1;
         delay.delay_ms(1000u16);
         // avr_device::asm::sleep();
