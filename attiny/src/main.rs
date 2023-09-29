@@ -10,13 +10,10 @@
 // i2c intro https://www.gadgetronicx.com/attiny85-i2c-protocol-tutorial/
 // ads1x1x https://github.com/eldruin/ads1x1x-rs/tree/master
 
-mod i2c;
 mod wire;
-use core::fmt::Write;
 mod i2c_adc;
 use attiny_hal as hal;
 use hal::{port::Pin, prelude::*};
-use i2c::I2C;
 use i2c_adc::I2CADC;
 use panic_halt as _;
 use wire::{IoPin, SlavePollEvent, TwoWire};
@@ -75,18 +72,16 @@ fn main() -> ! {
         fast_mode: false,
         usi: i2c_peripheral,
         scl: IoPin::Input(pins.i2c_scl.forget_imode()),
-        sda: IoPin::Input(pins.i2c_sda.forget_imode()),
-        led: pins.led1.into_output_high()
+        sda: IoPin::Input(pins.i2c_sda.forget_imode())
     };
-    // let mut i2c: I2C = I2C::with_external_pullup(i2c_peripheral, pins.i2c_sda, pins.i2c_scl);
+    let mut led = pins.led1.into_output_high();
 
     let mut delay = hal::delay::Delay::<hal::clock::MHz1>::new();
     delay.delay_ms(1000u16);
-    let mut x = 0u16;
+    let mut x = 0u8;
     // let mut message = heapless::Vec::<u8, 50>::new();
     i2c.begin(Some(8));
 
-    let mut last_value = 33;
     loop {
         // let read = {
         //     let mut i2c_adc = I2CADC::new(i2c);
@@ -112,17 +107,29 @@ fn main() -> ! {
                 let data = i2c.slave_read();
                 match data {
                     wire::SlaveReadResult::Stop(v) => match v {
-                        Some(v) => last_value = v,
-                        None => last_value = 33
+                        Some(v) => {
+                            if v > 0 {
+                                led.set_high();
+                            } else {
+                                led.set_low();
+                            }
+                        },
+                        None => {
+                            break;
+                        }
                     }
                     wire::SlaveReadResult::Continue(v) => {
-                        last_value = v;
-                        break;
+                        if v > 0 {
+                            led.set_high();
+                        } else {
+                            led.set_low();
+                        }
                     }
                 }
             },
             SlavePollEvent::StartWrite => loop {
-                let result = i2c.slave_write(Some(33));
+                let result = i2c.slave_write(Some(x));
+                x += 1;
                 if result == wire::SlaveWriteResult::Stop {
                     break;
                 }
@@ -131,13 +138,11 @@ fn main() -> ! {
                 
             }
         }
-        // let mut msg = [33u8; 6];
-        // let mut msg = b"x is \n";
-        // msg[..2].copy_from_slice(b"OK");
-        // msg[msg.len() - 1] = b'\n';
-        // let _ = i2c.write(8, &mut msg);
-
-        x += 1;
+        // let mut message = [33u8; 6];
+        // let mut message = b"x is \n";
+        // message[..2].copy_from_slice(b"OK");
+        // message[message.len() - 1] = b'\n';
+        // let _ = i2c.write(8, &message);
         delay.delay_ms(1000u16);
         // avr_device::asm::sleep();
     }

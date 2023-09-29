@@ -2,10 +2,10 @@ use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
 use embedded_hal::prelude::*;
 use strum::{Display, EnumIter};
 
-use crate::i2c::I2C;
+use crate::wire::TwoWire;
 
 type Adc = ads1x1x::Ads1x1x<
-    ads1x1x::interface::I2cInterface<I2C>,
+    ads1x1x::interface::I2cInterface<TwoWire>,
     ads1x1x::ic::Ads1115,
     ads1x1x::ic::Resolution16Bit,
     ads1x1x::mode::OneShot,
@@ -33,10 +33,10 @@ pub struct I2CADC {
 }
 
 impl I2CADC {
-    pub fn new(i2c: I2C) -> Self {
+    pub fn new(i2c: TwoWire) -> Self {
         let address = SlaveAddr::default();
         let mut adc: ads1x1x::Ads1x1x<
-            ads1x1x::interface::I2cInterface<I2C>,
+            ads1x1x::interface::I2cInterface<TwoWire>,
             ads1x1x::ic::Ads1115,
             ads1x1x::ic::Resolution16Bit,
             ads1x1x::mode::OneShot,
@@ -69,7 +69,7 @@ impl I2CADC {
         }
     }
 
-    pub fn destroy(self) -> I2C {
+    pub fn destroy(self) -> TwoWire {
         self.adc.destroy_ads1115()
     }
 }

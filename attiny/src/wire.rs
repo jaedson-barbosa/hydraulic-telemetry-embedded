@@ -1,6 +1,6 @@
 use attiny_hal as hal;
 use avr_hal_generic::i2c::Direction;
-use hal::{clock::MHz1, delay::Delay, port::Pin, prelude::*};
+use hal::{clock::MHz1, delay::Delay, prelude::*};
 
 #[derive(thiserror::Error, Debug)]
 pub enum UsiError {
@@ -104,7 +104,6 @@ pub struct TwoWire {
     pub usi: hal::pac::USI,
     pub sda: IoPin<hal::port::PB0>,
     pub scl: IoPin<hal::port::PB2>,
-    pub led: Pin<hal::port::mode::Output, hal::port::PB3>,
 }
 
 impl TwoWire {
@@ -204,7 +203,7 @@ impl TwoWire {
 
         let data = self.usi.usidr.read().bits();
         self.usi.usidr.write(|w| w.bits(0xFF));
-        self.sda.as_output();
+        self.sda.as_output_high();
         data
     }
 
@@ -271,24 +270,19 @@ impl TwoWire {
         };
     }
 
-    pub fn request_from<const N: usize>(&mut self, address: u8) -> Result<[u8; N], UsiError> {
-        let mut input_msg = [0u8; N];
-        self.raw_start(address, Direction::Read)?;
-        for index in 0..N {
-            let last = index == N - 1;
-            input_msg[index] = self.raw_read_bits(last);
+    pub fn master_read(&mut self, buffer: &mut [u8]) -> Result<(), UsiError> {
+        let last = buffer.len() - 1;
+        for (i, byte) in buffer.iter_mut().enumerate() {
+            *byte = self.raw_read_bits(i == last);
         }
-        self.raw_stop()?;
-        Ok(input_msg)
+        Ok(())
     }
 
     /// put 0 on first byte of msg
-    pub fn write(&mut self, address: u8, msg: &[u8]) -> Result<(), UsiError> {
-        self.raw_start(address, Direction::Write)?;
-        for data in msg {
+    pub fn master_write(&mut self, bytes: &[u8]) -> Result<(), UsiError> {
+        for data in bytes {
             self.raw_write_bits(*data)?;
         }
-        self.raw_stop()?;
         Ok(())
     }
 
@@ -461,14 +455,9 @@ impl TwoWire {
 
     fn set_usi_to_send_data(&mut self) {
         self.sda.as_output_high(); // maybe high
-        self.usi.usisr.write(|w| {
-            w.usioif()
-                .set_bit()
-                .usipf()
-                .set_bit()
-                .usicnt()
-                .bits(0)
-        });
+        self.usi
+            .usisr
+            .write(|w| w.usioif().set_bit().usipf().set_bit().usicnt().bits(0));
     }
 
     fn set_usi_to_read_data(&mut self) {
@@ -483,5 +472,46 @@ impl TwoWire {
                 .usicnt()
                 .bits(0)
         });
+    }
+}
+
+impl embedded_hal::blocking::i2c::Write for TwoWire {
+    type Error = UsiError;
+
+    fn write(&mut self, address: u8, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.raw_start(address, Direction::Write)?;
+        self.master_write(bytes)?;
+        self.raw_stop()?;
+        Ok(())
+    }
+}
+
+impl embedded_hal::blocking::i2c::WriteRead for TwoWire {
+    type Error = UsiError;
+
+    fn write_read(
+        &mut self,
+        address: u8,
+        bytes: &[u8],
+        buffer: &mut [u8],
+    ) -> Result<(), Self::Error> {
+        
+        self.raw_start(address, Direction::Write)?;
+        self.master_write(bytes)?;
+        self.raw_start(address, Direction::Read)?;
+        self.master_read(buffer)?;
+        self.raw_stop()?;
+        Ok(())
+    }
+}
+
+impl embedded_hal::blocking::i2c::Read for TwoWire {
+    type Error = UsiError;
+
+    fn read(&mut self, address: u8, buffer: &mut [u8]) -> Result<(), Self::Error> {
+        self.raw_start(address, Direction::Read)?;
+        self.master_read(buffer)?;
+        self.raw_stop()?;
+        Ok(())
     }
 }
