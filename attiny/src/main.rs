@@ -28,18 +28,6 @@ use wire::{IoPin, SlavePollEvent, TwoWire};
 //     dp.CPU.mcucr.write(|w| w.sm().idle());
 // }
 
-avr_hal_generic::renamed_pins! {
-    type Pin = Pin;
-
-    pub struct Pins from hal::Pins {
-        pub pb1: hal::port::PB1 = pb1,
-        pub led1: hal::port::PB3 = pb3,
-        pub i2c_sda: hal::port::PB0 = pb0,
-        pub i2c_scl: hal::port::PB2 = pb2,
-        pub led2: hal::port::PB4 = pb4,
-    }
-}
-
 pub trait NumberWrite<const N: usize> {
     fn write_str_number(&mut self, n: u16) -> Result<(), ()>;
 }
@@ -64,17 +52,17 @@ fn main() -> ! {
     let dp = hal::Peripherals::take().unwrap();
     // enable_sleep(&dp);
 
-    let pins = Pins::with_mcu_pins(hal::pins!(dp));
+    let pins = hal::pins!(dp);
     let i2c_peripheral = dp.USI;
     let mut i2c = TwoWire {
         address: None,
         delay: hal::delay::Delay::<hal::clock::MHz1>::new(),
         fast_mode: false,
         usi: i2c_peripheral,
-        scl: IoPin::Input(pins.i2c_scl.forget_imode()),
-        sda: IoPin::Input(pins.i2c_sda.forget_imode())
+        scl: IoPin::Input(pins.pb2.forget_imode()),
+        sda: IoPin::Input(pins.pb0.forget_imode())
     };
-    let mut led = pins.led1.into_output_high();
+    let mut led = pins.pb3.into_output_high();
 
     let mut delay = hal::delay::Delay::<hal::clock::MHz1>::new();
     delay.delay_ms(1000u16);

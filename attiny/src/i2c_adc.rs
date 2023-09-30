@@ -1,15 +1,6 @@
 use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
-use embedded_hal::prelude::*;
 use strum::{Display, EnumIter};
-
-use crate::wire::TwoWire;
-
-type Adc = ads1x1x::Ads1x1x<
-    ads1x1x::interface::I2cInterface<TwoWire>,
-    ads1x1x::ic::Ads1115,
-    ads1x1x::ic::Resolution16Bit,
-    ads1x1x::mode::OneShot,
->;
+use ads1x1x::adc::OneShot;
 
 #[derive(Display, EnumIter)]
 #[repr(u8)]
@@ -17,7 +8,7 @@ pub enum AnalogInput {
     A0,
     A1,
     A2,
-    A3
+    A3,
 }
 
 #[derive(Debug)]
@@ -28,19 +19,25 @@ pub struct I2CADCRead {
     pub a3: u16,
 }
 
-pub struct I2CADC {
-    adc: Adc,
+pub struct I2CADC<I2C>
+where
+    I2C: embedded_hal::i2c::I2c,
+{
+    adc: ads1x1x::Ads1x1x<
+        ads1x1x::interface::I2cInterface<I2C>,
+        ads1x1x::ic::Ads1115,
+        ads1x1x::ic::Resolution16Bit,
+        ads1x1x::mode::OneShot,
+    >,
 }
 
-impl I2CADC {
-    pub fn new(i2c: TwoWire) -> Self {
+impl<I2C> I2CADC<I2C>
+where
+    I2C: embedded_hal::i2c::I2c,
+{
+    pub fn new(i2c: I2C) -> Self {
         let address = SlaveAddr::default();
-        let mut adc: ads1x1x::Ads1x1x<
-            ads1x1x::interface::I2cInterface<TwoWire>,
-            ads1x1x::ic::Ads1115,
-            ads1x1x::ic::Resolution16Bit,
-            ads1x1x::mode::OneShot,
-        > = Ads1x1x::new_ads1115(i2c, address);
+        let mut adc = Ads1x1x::new_ads1115(i2c, address);
         adc.set_full_scale_range(FullScaleRange::Within6_144V)
             .unwrap();
         I2CADC { adc }
@@ -69,7 +66,7 @@ impl I2CADC {
         }
     }
 
-    pub fn destroy(self) -> TwoWire {
+    pub fn destroy(self) -> I2C {
         self.adc.destroy_ads1115()
     }
 }

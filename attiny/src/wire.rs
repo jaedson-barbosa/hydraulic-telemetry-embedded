@@ -1,5 +1,5 @@
 use attiny_hal as hal;
-use avr_hal_generic::i2c::Direction;
+use embedded_hal::i2c::Operation;
 use hal::{clock::MHz1, delay::Delay, prelude::*};
 
 #[derive(thiserror::Error, Debug)]
@@ -224,7 +224,7 @@ impl TwoWire {
         self.usi.usisr.read().usisif().bit_is_clear()
     }
 
-    fn raw_start(&mut self, address: u8, direction: Direction) -> Result<(), UsiError> {
+    fn raw_start(&mut self, address: u8, op: &Operation) -> Result<(), UsiError> {
         self.scl.as_output_high();
         self.wait_scl_go_high();
         self.delay_t4twi();
@@ -235,7 +235,8 @@ impl TwoWire {
         if self.start_condition_not_detected() {
             return Err(UsiError::UsiTwiMissingStartCon);
         }
-        self.raw_write_bits((address << 1) | direction as u8)
+        let op_bit = if let Operation::Read(_) = op { 1 } else { 0 };
+        self.raw_write_bits((address << 1) | op_bit)
             .map_err(|_| UsiError::UsiTwiNoAckOnAddress)
     }
 
@@ -475,43 +476,68 @@ impl TwoWire {
     }
 }
 
-impl embedded_hal::blocking::i2c::Write for TwoWire {
-    type Error = UsiError;
-
-    fn write(&mut self, address: u8, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.raw_start(address, Direction::Write)?;
-        self.master_write(bytes)?;
-        self.raw_stop()?;
-        Ok(())
+impl embedded_hal::i2c::Error for UsiError {
+    fn kind(&self) -> embedded_hal::i2c::ErrorKind {
+        use embedded_hal::i2c::{ErrorKind, NoAcknowledgeSource};
+        match self {
+            UsiError::UsiTwiNoAckOnAddress => {
+                ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)
+            }
+            UsiError::UsiTwiNoAckOnData => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data),
+            UsiError::UsiTwiMissingStartCon => ErrorKind::Bus,
+            UsiError::UsiTwiMissingStopCon => ErrorKind::Bus,
+        }
     }
 }
 
-impl embedded_hal::blocking::i2c::WriteRead for TwoWire {
+impl embedded_hal::i2c::ErrorType for TwoWire {
     type Error = UsiError;
+}
 
-    fn write_read(
+impl embedded_hal::i2c::I2c for TwoWire {
+    fn transaction(
         &mut self,
         address: u8,
-        bytes: &[u8],
-        buffer: &mut [u8],
+        operations: &mut [Operation<'_>],
     ) -> Result<(), Self::Error> {
-        
-        self.raw_start(address, Direction::Write)?;
-        self.master_write(bytes)?;
-        self.raw_start(address, Direction::Read)?;
-        self.master_read(buffer)?;
+        for op in operations {
+            self.raw_start(address, &op)?;
+            match op {
+                Operation::Read(buffer) => self.master_read(buffer)?,
+                Operation::Write(buffer) => self.master_write(buffer)?,
+            }
+        }
         self.raw_stop()?;
         Ok(())
     }
 }
 
-impl embedded_hal::blocking::i2c::Read for TwoWire {
-    type Error = UsiError;
+// impl embedded_hal::blocking::i2c::WriteRead for TwoWire {
+//     type Error = UsiError;
 
-    fn read(&mut self, address: u8, buffer: &mut [u8]) -> Result<(), Self::Error> {
-        self.raw_start(address, Direction::Read)?;
-        self.master_read(buffer)?;
-        self.raw_stop()?;
-        Ok(())
-    }
-}
+//     fn write_read(
+//         &mut self,
+//         address: u8,
+//         bytes: &[u8],
+//         buffer: &mut [u8],
+//     ) -> Result<(), Self::Error> {
+
+//         self.raw_start(address, Direction::Write)?;
+//         self.master_write(bytes)?;
+//         self.raw_start(address, Direction::Read)?;
+//         self.master_read(buffer)?;
+//         self.raw_stop()?;
+//         Ok(())
+//     }
+// }
+
+// impl embedded_hal::blocking::i2c::Read for TwoWire {
+//     type Error = UsiError;
+
+//     fn read(&mut self, address: u8, buffer: &mut [u8]) -> Result<(), Self::Error> {
+//         self.raw_start(address, Direction::Read)?;
+//         self.master_read(buffer)?;
+//         self.raw_stop()?;
+//         Ok(())
+//     }
+// }

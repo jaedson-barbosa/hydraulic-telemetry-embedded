@@ -1,6 +1,6 @@
 // generalize based on https://github.com/lopsided98/acurite-thermometer/blob/main/acurite-thermometer/src/tmp102.rs
 
-use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
+use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr, adc::OneShot};
 use hal::{
     i2c::I2C,
     peripherals::I2C0,
