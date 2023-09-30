@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.dependencies]
 avr-device = "0.5.2"
-embedded-hal = "0.2.7"
+embedded-hal = "1.0.0-rc.1"
 panic-halt = "0.2.0"
 attiny-hal = { git = "https://github.com/rahix/avr-hal", features = [
     "rt",

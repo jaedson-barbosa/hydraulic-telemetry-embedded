@@ -78,7 +78,7 @@ fn main() -> ! {
 
     let mut delay = hal::delay::Delay::<hal::clock::MHz1>::new();
     delay.delay_ms(1000u16);
-    let mut x = 0u8;
+    // let mut x = 0u8;
     // let mut message = heapless::Vec::<u8, 50>::new();
     i2c.begin(Some(8));
 
@@ -128,8 +128,8 @@ fn main() -> ! {
                 }
             },
             SlavePollEvent::StartWrite => loop {
-                let result = i2c.slave_write(Some(x));
-                x += 1;
+                let result = i2c.slave_write(Some(33));
+                // x += 1;
                 if result == wire::SlaveWriteResult::Stop {
                     break;
                 }
@@ -143,7 +143,7 @@ fn main() -> ! {
         // message[..2].copy_from_slice(b"OK");
         // message[message.len() - 1] = b'\n';
         // let _ = i2c.write(8, &message);
-        delay.delay_ms(1000u16);
+        // delay.delay_ms(1000u16);
         // avr_device::asm::sleep();
     }
 }

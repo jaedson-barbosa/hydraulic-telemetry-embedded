@@ -25,6 +25,7 @@ use embassy_net::{
     StackResources,
 };
 use embassy_time::{Duration, Ticker, Timer};
+use embedded_hal::i2c::I2c;
 use embedded_svc::wifi::{AuthMethod, ClientConfiguration, Configuration, Wifi};
 use esp_backtrace as _;
 use esp_println::println;
@@ -38,17 +39,18 @@ use hal::{
     clock::{ClockControl, CpuClock},
     embassy,
     gpio::{Gpio10, GpioPin, Input, Output, PullDown, PushPull, IO},
-    i2c::I2C,
+    i2c::{self, I2C},
     interrupt,
     ledc::{
         channel::{self, ChannelIFace},
         timer::{self, TimerIFace},
         LSGlobalClkSource, LowSpeed, LEDC,
     },
-    peripherals::{self, Peripherals},
+    peripherals::{self, Peripherals, I2C0},
     prelude::*,
     systimer::SystemTimer,
-    timer::TimerGroup, Rtc, Rng,
+    timer::TimerGroup,
+    Rng, Rtc,
 };
 use i2c_adc::I2CADC;
 use int_adc::{IntADC, ATTENUATION};
@@ -78,14 +80,6 @@ fn entry() -> ! {
         spawner.spawn(main(spawner)).ok();
     });
 }
-
-// type Adc = Ads1x1x<I2C<'_, I2C0>, Ads1115, Resolution16Bit, ads1x1x::mode::OneShot>;
-
-// // Read a single value from channel A.
-// // Returns 0 on Error.
-// pub fn read(adc: &mut Adc) -> i16 {
-//     block!(adc.read(&mut SingleA0)).unwrap_or(0)
-// }
 
 #[embassy_executor::task]
 async fn main(spawner: Spawner) {
@@ -125,15 +119,32 @@ async fn main(spawner: Spawner) {
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let pulse_pin = io.pins.gpio10.into_pull_down_input();
     interrupt::enable(peripherals::Interrupt::GPIO, interrupt::Priority::Priority1).unwrap();
+    interrupt::enable(peripherals::Interrupt::I2C_EXT0, interrupt::Priority::Priority1).unwrap();
 
-    let i2c0 = I2C::new(
+    let mut i2c0 = I2C::new(
         peripherals.I2C0,
         io.pins.gpio18,
         io.pins.gpio19,
-        400u32.kHz(),
+        32u32.kHz(),
         &mut peripheral_clock_control,
         &clocks,
     );
+
+    loop {
+        let mut buffer = [0u8; 6];
+        println!("Awaiting i2c message");
+        let res = hal::prelude::_embedded_hal_async_i2c_I2c::read(&mut i2c0, 8, &mut buffer).await;
+        println!("OK");
+        match res {
+            Ok(_) => println!("Received {buffer:?}"),
+            // Ok(_) => match core::str::from_utf8(&buffer) {
+            //     Ok(message) => println!("Received message: {message}"),
+            //     Err(v) => println!("Error while decoding message: {v}"),
+            // },
+            Err(v) => println!("Error while receiving i2c data: {v:?}"),
+        };
+        embassy_time::Timer::after(Duration::from_millis(1000)).await;
+    }
     let i2c_adc = I2CADC::new(i2c0);
 
     let pressure_pwm_pin: GpioPin<Output<PushPull>, 5> = io.pins.gpio5.into_push_pull_output();
@@ -178,10 +189,10 @@ async fn main(spawner: Spawner) {
         }
     };
 
-    spawner.spawn(pulse_counter(pulse_pin)).ok();
-    spawner.spawn(connection(controller)).ok();
-    spawner.spawn(net_task(&stack)).ok();
-    spawner.spawn(task(&stack, i2c_adc, out_control)).ok();
+    // spawner.spawn(pulse_counter(pulse_pin)).ok();
+    // spawner.spawn(connection(controller)).ok();
+    // spawner.spawn(net_task(&stack)).ok();
+    // spawner.spawn(task(&stack, i2c_adc, out_control)).ok();
 }
 
 #[embassy_executor::task]
