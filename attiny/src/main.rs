@@ -13,10 +13,12 @@
 mod wire;
 mod i2c_adc;
 use attiny_hal as hal;
+use desse::Desse;
 use hal::{port::Pin, prelude::*};
 use i2c_adc::I2CADC;
 use panic_halt as _;
 use wire::{IoPin, SlavePollEvent, TwoWire};
+use shared::CommTest;
 
 // fn enable_interrupt(dp: &hal::Peripherals) {}
 
@@ -70,7 +72,10 @@ fn main() -> ! {
     // let mut message = heapless::Vec::<u8, 50>::new();
     i2c.begin(Some(8));
 
-    loop {
+    let comm_test = CommTest { a: 2, b: -2 };
+    let serialized = comm_test.serialize();
+
+    'main_loop: loop {
         // let read = {
         //     let mut i2c_adc = I2CADC::new(i2c);
         //     let read = i2c_adc.read_all_mv();
@@ -115,16 +120,16 @@ fn main() -> ! {
                     }
                 }
             },
-            SlavePollEvent::StartWrite => loop {
-                let result = i2c.slave_write(Some(33));
-                // x += 1;
-                if result == wire::SlaveWriteResult::Stop {
-                    break;
+            SlavePollEvent::StartWrite =>  {
+                for byte in serialized {
+                    match i2c.slave_write(Some(byte)) {
+                        wire::SlaveWriteResult::Stop => continue 'main_loop,
+                        _ => {}
+                    }
                 }
+                while i2c.slave_write(None) == wire::SlaveWriteResult::Continue {}
             },
-            SlavePollEvent::None => {
-                
-            }
+            SlavePollEvent::None => {}
         }
         // let mut message = [33u8; 6];
         // let mut message = b"x is \n";

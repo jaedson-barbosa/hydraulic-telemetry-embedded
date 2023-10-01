@@ -22,3 +22,4 @@ nb.workspace = true
 heapless = { version = "0.7.16", default-features = false }
 thiserror = { version = "1.0.38", package = "thiserror-core", default-features = false }
 desse.workspace = true
+shared = { path = "../shared" }

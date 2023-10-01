@@ -95,6 +95,7 @@ dependencies = [
  "heapless",
  "nb 1.1.0",
  "panic-halt",
+ "shared",
  "strum 0.25.0",
  "thiserror-core",
 ]
@@ -551,6 +552,7 @@ name = "esp"
 version = "0.1.0"
 dependencies = [
  "ads1x1x",
+ "desse",
  "dotenvy_macro",
  "embassy-executor",
  "embassy-net",
@@ -566,6 +568,7 @@ dependencies = [
  "nb 1.1.0",
  "serde",
  "serde-json-core",
+ "shared",
  "strum 0.25.0",
 ]
 
@@ -1342,6 +1345,13 @@ dependencies = [
  "proc-macro2 1.0.67",
  "quote 1.0.33",
  "syn 2.0.37",
+]
+
+[[package]]
+name = "shared"
+version = "0.1.0"
+dependencies = [
+ "desse",
 ]
 
 [[package]]

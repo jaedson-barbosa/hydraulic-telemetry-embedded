@@ -14,6 +14,7 @@ mod int_adc;
 mod out_control;
 
 use core::sync::atomic::{AtomicU32, Ordering};
+use desse::Desse;
 use dotenvy_macro::dotenv;
 use embassy_executor::{Executor, Spawner, _export::StaticCell};
 use embassy_net::{
@@ -131,12 +132,15 @@ async fn main(spawner: Spawner) {
     );
 
     loop {
-        let mut buffer = [0u8; 6];
+        let mut buffer = [0u8; 3];
         println!("Awaiting i2c message");
         let res = hal::prelude::_embedded_hal_async_i2c_I2c::read(&mut i2c0, 8, &mut buffer).await;
         println!("OK");
         match res {
-            Ok(_) => println!("Received {buffer:?}"),
+            Ok(_) => {
+                let comm_test = shared::CommTest::deserialize_from(&buffer);
+                println!("Received {buffer:?} = {comm_test:?}");
+            },
             // Ok(_) => match core::str::from_utf8(&buffer) {
             //     Ok(message) => println!("Received message: {message}"),
             //     Err(v) => println!("Error while decoding message: {v}"),
