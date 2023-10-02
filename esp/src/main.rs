@@ -13,7 +13,7 @@ mod i2c_adc;
 mod int_adc;
 mod out_control;
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use desse::Desse;
 use dotenvy_macro::dotenv;
 use embassy_executor::{Executor, Spawner, _export::StaticCell};
@@ -26,7 +26,6 @@ use embassy_net::{
     StackResources,
 };
 use embassy_time::{Duration, Ticker, Timer};
-use embedded_hal::i2c::I2c;
 use embedded_svc::wifi::{AuthMethod, ClientConfiguration, Configuration, Wifi};
 use esp_backtrace as _;
 use esp_println::println;
@@ -36,11 +35,10 @@ use esp_wifi::{
     EspWifiInitFor,
 };
 use hal::{
-    adc::{AdcCalCurve, AdcConfig, ADC, ADC1},
     clock::{ClockControl, CpuClock},
     embassy,
     gpio::{Gpio10, GpioPin, Input, Output, PullDown, PushPull, IO},
-    i2c::{self, I2C},
+    i2c::I2C,
     interrupt,
     ledc::{
         channel::{self, ChannelIFace},
@@ -54,8 +52,8 @@ use hal::{
     Rng, Rtc,
 };
 use i2c_adc::I2CADC;
-use int_adc::{IntADC, ATTENUATION};
 use mqttrs::{decode_slice, encode_slice, SubscribeTopic};
+use shared::{AttinyRequest, AttinyResponse};
 
 use crate::out_control::OutControl;
 
@@ -71,7 +69,12 @@ macro_rules! singleton {
     }};
 }
 
-static N_PULSES: AtomicU32 = AtomicU32::new(0);
+static N_PULSES: AtomicU16 = AtomicU16::new(0);
+static CHARGER_EN: AtomicBool = AtomicBool::new(false);
+static A0_TENSION: AtomicU16 = AtomicU16::new(0);
+static A1_TENSION: AtomicU16 = AtomicU16::new(0);
+static A2_TENSION: AtomicU16 = AtomicU16::new(0);
+static A3_TENSION: AtomicU16 = AtomicU16::new(0);
 
 #[entry]
 fn entry() -> ! {
@@ -80,6 +83,79 @@ fn entry() -> ! {
     executor.run(|spawner| {
         spawner.spawn(main(spawner)).ok();
     });
+}
+
+fn read_initial_attiny_state<I2C>(i2c: &mut I2C) -> AttinyResponse
+where
+    I2C: embedded_hal::i2c::I2c,
+{
+    let mut buffer = [0u8; 1];
+    loop {
+        let response = i2c.read(8, &mut buffer);
+        match response {
+            Ok(_) => break AttinyResponse::deserialize_from(&buffer),
+            Err(v) => println!("Error while receiving i2c data: {v:?}"),
+        }
+    }
+}
+
+fn update_charger_en<I2C>(i2c: &mut I2C, current_charger_en: &mut bool)
+where
+    I2C: embedded_hal::i2c::I2c,
+{
+    let desired_charger_en = CHARGER_EN.load(Ordering::Acquire);
+    if *current_charger_en == desired_charger_en {
+        return;
+    }
+    let set_command = AttinyRequest::UpdateChargerEn(desired_charger_en).serialize();
+    let res = i2c.write(8, &set_command);
+    match res {
+        Ok(_) => {
+            *current_charger_en = desired_charger_en;
+            println!("Updated charger enable to {current_charger_en}");
+        }
+        Err(v) => println!("Error while writting i2c data: {v:?}"),
+    };
+}
+
+/*fn update_n_pulses<I2C>(i2c: &mut I2C) where I2C: embedded_hal::i2c::I2c {
+    let response = {
+        let request = AttinyCommand::GetNPulses.serialize();
+        let mut response_buffer = [0u8; 3];
+        let res = i2c.write_read(8, &request, &mut response_buffer);
+        match res {
+            Ok(_) => AttinyResponse::deserialize_from(&response_buffer),
+            Err(v) => {
+                println!("Error while receiving i2c data: {v:?}");
+                return;
+            }
+        }
+    };
+    match response {
+        AttinyResponse::NPulses(val) => N_PULSES.store(val, Ordering::Release)
+    }
+}*/
+
+#[embassy_executor::task]
+async fn i2c_controller(mut i2c: I2C<'static, I2C0>) {
+    let initial_state = read_initial_attiny_state(&mut i2c);
+    let mut current_charger_en = true;
+
+    let mut ticker = Ticker::every(Duration::from_secs(1));
+    loop {
+        ticker.next().await;
+        update_charger_en(&mut i2c, &mut current_charger_en);
+        // TODO uncomment after implementing this in attiny
+        // update_n_pulses(&mut i2c);
+        let mut i2c_adc = I2CADC::new(i2c);
+        let i2c_read = i2c_adc.read_all_mv();
+        A0_TENSION.store(i2c_read.a0, Ordering::Release);
+        A1_TENSION.store(i2c_read.a1, Ordering::Release);
+        A2_TENSION.store(i2c_read.a2, Ordering::Release);
+        A3_TENSION.store(i2c_read.a3, Ordering::Release);
+        i2c = i2c_adc.destroy();
+        println!("Read analog inputs: {i2c_read:?}");
+    }
 }
 
 #[embassy_executor::task]
@@ -120,9 +196,13 @@ async fn main(spawner: Spawner) {
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let pulse_pin = io.pins.gpio10.into_pull_down_input();
     interrupt::enable(peripherals::Interrupt::GPIO, interrupt::Priority::Priority1).unwrap();
-    interrupt::enable(peripherals::Interrupt::I2C_EXT0, interrupt::Priority::Priority1).unwrap();
+    interrupt::enable(
+        peripherals::Interrupt::I2C_EXT0,
+        interrupt::Priority::Priority1,
+    )
+    .unwrap();
 
-    let mut i2c0 = I2C::new(
+    let i2c = I2C::new(
         peripherals.I2C0,
         io.pins.gpio18,
         io.pins.gpio19,
@@ -130,26 +210,7 @@ async fn main(spawner: Spawner) {
         &mut peripheral_clock_control,
         &clocks,
     );
-
-    loop {
-        let mut buffer = [0u8; 3];
-        println!("Awaiting i2c message");
-        let res = hal::prelude::_embedded_hal_async_i2c_I2c::read(&mut i2c0, 8, &mut buffer).await;
-        println!("OK");
-        match res {
-            Ok(_) => {
-                let comm_test = shared::CommTest::deserialize_from(&buffer);
-                println!("Received {buffer:?} = {comm_test:?}");
-            },
-            // Ok(_) => match core::str::from_utf8(&buffer) {
-            //     Ok(message) => println!("Received message: {message}"),
-            //     Err(v) => println!("Error while decoding message: {v}"),
-            // },
-            Err(v) => println!("Error while receiving i2c data: {v:?}"),
-        };
-        embassy_time::Timer::after(Duration::from_millis(1000)).await;
-    }
-    let i2c_adc = I2CADC::new(i2c0);
+    spawner.spawn(i2c_controller(i2c)).ok();
 
     let pressure_pwm_pin: GpioPin<Output<PushPull>, 5> = io.pins.gpio5.into_push_pull_output();
 
@@ -177,7 +238,7 @@ async fn main(spawner: Spawner) {
 
     let out_control = OutControl::new(io.pins.gpio6, io.pins.gpio7);
 
-    let internal_adc = {
+    /*let internal_adc = {
         let analog = peripherals.APB_SARADC.split();
         let mut adc1_config = AdcConfig::new();
         let analog1 = adc1_config
@@ -191,12 +252,12 @@ async fn main(spawner: Spawner) {
             analog2,
             adc1,
         }
-    };
+    };*/
 
-    // spawner.spawn(pulse_counter(pulse_pin)).ok();
-    // spawner.spawn(connection(controller)).ok();
-    // spawner.spawn(net_task(&stack)).ok();
-    // spawner.spawn(task(&stack, i2c_adc, out_control)).ok();
+    spawner.spawn(pulse_counter(pulse_pin)).ok();
+    spawner.spawn(connection(controller)).ok();
+    spawner.spawn(net_task(&stack)).ok();
+    spawner.spawn(task(&stack, out_control)).ok();
 }
 
 #[embassy_executor::task]
@@ -204,7 +265,7 @@ async fn pulse_counter(mut pin: Gpio10<Input<PullDown>>) {
     loop {
         println!("waiting...");
         pin.wait_for_rising_edge().await.unwrap();
-        let n_pulses: u32 = N_PULSES.fetch_add(1, Ordering::Release) + 1;
+        let n_pulses: u16 = N_PULSES.fetch_add(1, Ordering::Release) + 1;
         println!("number of pulses: {n_pulses}");
         Timer::after(Duration::from_millis(10)).await;
     }
@@ -290,11 +351,11 @@ async fn subscribe_mqtt_topics<'a>(socket: &mut TcpSocket<'a>) {
 
 #[derive(serde::Serialize, Debug)]
 struct PublishState {
-    n_pulses: u32,
-    pressure_ma: f32,
-    generator_v: f32,
-    battery_v: f32,
-    // regulator_output_v: f32
+    n_pulses: u16,
+    a0: u16,
+    a1: u16,
+    a2: u16,
+    a3: u16,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -303,7 +364,7 @@ struct ReceiveState {
     enable_pressure: bool,
 }
 
-async fn mqtt_publish<'a, 'b>(socket: &mut TcpWriter<'a>, mut i2c_adc: I2CADC) {
+async fn mqtt_publish<'a, 'b>(socket: &mut TcpWriter<'a>) {
     // let mut ping_buffer = [0u8; 1024];
     // let ping = mqttrs::Packet::Pingreq {};
     // let ping_size = encode_slice(&ping, &mut ping_buffer).unwrap();
@@ -317,16 +378,13 @@ async fn mqtt_publish<'a, 'b>(socket: &mut TcpWriter<'a>, mut i2c_adc: I2CADC) {
             // socket.write(&ping_buffer[..ping_size]).await.unwrap();
         } else {
             let n_pulses = N_PULSES.fetch_min(0, Ordering::Acquire);
-            let adc_read = i2c_adc.read_all();
-            let pressure_ma = adc_read.pressure * 10.0;
-            let generator_v = adc_read.generator * 11.0;
             // let battery_mv = i2c_adc.read_mv(&AnalogInput::Battery);
             let state = PublishState {
                 n_pulses,
-                pressure_ma,
-                generator_v,
-                battery_v: adc_read.battery,
-                // regulator_output_v: adc_read.regulator_output
+                a0: A0_TENSION.load(Ordering::Acquire),
+                a1: A1_TENSION.load(Ordering::Acquire),
+                a2: A2_TENSION.load(Ordering::Acquire),
+                a3: A3_TENSION.load(Ordering::Acquire),
             };
             let json = serde_json_core::to_string::<PublishState, 256>(&state).unwrap();
             let publish = mqttrs::Publish {
@@ -390,11 +448,7 @@ async fn net_task(stack: &'static Stack<WifiDevice<'static>>) {
 }
 
 #[embassy_executor::task]
-async fn task(
-    stack: &'static Stack<WifiDevice<'static>>,
-    i2c_adc: I2CADC,
-    outputs_controller: OutControl,
-) {
+async fn task(stack: &'static Stack<WifiDevice<'static>>, outputs_controller: OutControl) {
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
 
@@ -434,7 +488,7 @@ async fn task(
     let (mut reader, mut writer) = socket.split();
     let _result = core::future::join!(
         mqtt_read(&mut reader, outputs_controller),
-        mqtt_publish(&mut writer, i2c_adc)
+        mqtt_publish(&mut writer)
     )
     .await;
 }

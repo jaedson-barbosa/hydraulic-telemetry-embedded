@@ -58,3 +58,5 @@ serde-json-core = "0.5.1"
 ads1x1x.workspace = true
 desse.workspace = true
 shared = { path = "../shared" }
+embedded-hal-async = "1.0.0-rc.1"
+embassy-sync = "0.3.0"

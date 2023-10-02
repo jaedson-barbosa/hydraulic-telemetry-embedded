@@ -14,11 +14,10 @@ mod wire;
 mod i2c_adc;
 use attiny_hal as hal;
 use desse::Desse;
-use hal::{port::Pin, prelude::*};
-use i2c_adc::I2CADC;
+use hal::prelude::*;
 use panic_halt as _;
 use wire::{IoPin, SlavePollEvent, TwoWire};
-use shared::CommTest;
+use shared::{AttinyRequest,AttinyResponse};
 
 // fn enable_interrupt(dp: &hal::Peripherals) {}
 
@@ -64,16 +63,11 @@ fn main() -> ! {
         scl: IoPin::Input(pins.pb2.forget_imode()),
         sda: IoPin::Input(pins.pb0.forget_imode())
     };
-    let mut led = pins.pb3.into_output_high();
+    let mut charger_en_pin = pins.pb3.into_output();
 
     let mut delay = hal::delay::Delay::<hal::clock::MHz1>::new();
     delay.delay_ms(1000u16);
-    // let mut x = 0u8;
-    // let mut message = heapless::Vec::<u8, 50>::new();
     i2c.begin(Some(8));
-
-    let comm_test = CommTest { a: 2, b: -2 };
-    let serialized = comm_test.serialize();
 
     'main_loop: loop {
         // let read = {
@@ -82,46 +76,27 @@ fn main() -> ! {
         //     i2c = i2c_adc.destroy();
         //     read
         // };
-
-        // message.clear();
-        // let _ = message.extend_from_slice(b"x is ");
-        // let _ = message.write_str_number(x);
-        // let _ = message.extend_from_slice(b" and ");
-        // let _ = message.write_str_number(read.a0);
-        // let _ = message.push(b',');
-        // let _ = message.write_str_number(read.a1);
-        // let _ = message.push(b',');
-        // let _ = message.write_str_number(read.a2);
-        // let _ = message.push(b',');
-        // let _ = message.write_str_number(read.a3);
-        // let _ = message.push(b'\n');
         match i2c.slave_poll() {
-            SlavePollEvent::StartRead => loop {
-                let data = i2c.slave_read();
-                match data {
-                    wire::SlaveReadResult::Stop(v) => match v {
-                        Some(v) => {
-                            if v > 0 {
-                                led.set_high();
-                            } else {
-                                led.set_low();
-                            }
+            SlavePollEvent::StartRead => {
+                let mut buffer = [0u8; 2];
+                // TODO prepare code for invalid request sizes
+                for byte in buffer.iter_mut() {
+                    match i2c.slave_read() {
+                        wire::SlaveReadResult::Stop(v) => match v {
+                            Some(v) => *byte = v,
+                            None => continue 'main_loop
                         },
-                        None => {
-                            break;
-                        }
+                        wire::SlaveReadResult::Continue(v) => *byte = v
                     }
-                    wire::SlaveReadResult::Continue(v) => {
-                        if v > 0 {
-                            led.set_high();
-                        } else {
-                            led.set_low();
-                        }
-                    }
+                }
+                let request = AttinyRequest::deserialize_from(&buffer);
+                match request {
+                    AttinyRequest::UpdateChargerEn(v) => if v { charger_en_pin.set_high() } else { charger_en_pin.set_low() }
                 }
             },
             SlavePollEvent::StartWrite =>  {
-                for byte in serialized {
+                let state_buffer = AttinyResponse { charger_en: charger_en_pin.is_set_high() }.serialize();
+                for byte in state_buffer {
                     match i2c.slave_write(Some(byte)) {
                         wire::SlaveWriteResult::Stop => continue 'main_loop,
                         _ => {}
@@ -131,12 +106,5 @@ fn main() -> ! {
             },
             SlavePollEvent::None => {}
         }
-        // let mut message = [33u8; 6];
-        // let mut message = b"x is \n";
-        // message[..2].copy_from_slice(b"OK");
-        // message[message.len() - 1] = b'\n';
-        // let _ = i2c.write(8, &message);
-        // delay.delay_ms(1000u16);
-        // avr_device::asm::sleep();
     }
 }

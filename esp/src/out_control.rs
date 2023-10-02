@@ -8,7 +8,7 @@ use hal::{
 };
 
 pub struct OutControl {
-    charger_en_pin: GpioPin<Output<PushPull>, 6>,
+    // charger_en_pin: GpioPin<Output<PushPull>, 6>,
     pressure_en_pin: GpioPin<Output<PushPull>, 7>,
     // channel0: channel::Channel<'a, LowSpeed, GpioPin<Output<PushPull>, 18>>,
 }
@@ -41,19 +41,19 @@ impl OutControl {
         //     .unwrap();
 
         Self {
-            charger_en_pin: charger_pin.into_push_pull_output(),
+            // charger_en_pin: charger_pin.into_push_pull_output(),
             pressure_en_pin: pressure_en_pin.into_push_pull_output(),
             // channel0
         }
     }
 
-    pub fn charger_en_set(&mut self, state: bool) {
-        if state {
-            self.charger_en_pin.set_high().unwrap();
-        } else {
-            self.charger_en_pin.set_low().unwrap();
-        }
-    }
+    // pub fn charger_en_set(&mut self, state: bool) {
+    //     if state {
+    //         self.charger_en_pin.set_high().unwrap();
+    //     } else {
+    //         self.charger_en_pin.set_low().unwrap();
+    //     }
+    // }
 
     pub fn pressure_en_set(&mut self, state: bool) {
         if state {

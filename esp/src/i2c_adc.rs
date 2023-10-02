@@ -1,72 +1,72 @@
-// generalize based on https://github.com/lopsided98/acurite-thermometer/blob/main/acurite-thermometer/src/tmp102.rs
-
-use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr, adc::OneShot};
-use hal::{
-    i2c::I2C,
-    peripherals::I2C0,
-    prelude::*,
-};
+use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
 use strum::{Display, EnumIter};
-
-type Adc = ads1x1x::Ads1x1x<
-    ads1x1x::interface::I2cInterface<I2C<'static, I2C0>>,
-    ads1x1x::ic::Ads1115,
-    ads1x1x::ic::Resolution16Bit,
-    ads1x1x::mode::OneShot,
->;
+use ads1x1x::adc::OneShot;
 
 #[derive(Display, EnumIter)]
+#[repr(u8)]
 pub enum AnalogInput {
-    Pressure,
-    Generator,
-    Battery,
-    // RegulatorOutput,
+    A0,
+    A1,
+    A2,
+    A3,
 }
 
 #[derive(Debug)]
 pub struct I2CADCRead {
-    pub pressure: f32,
-    pub generator: f32,
-    pub battery: f32,
-    // pub regulator_output: f32
+    pub a0: u16,
+    pub a1: u16,
+    pub a2: u16,
+    pub a3: u16,
 }
 
-pub struct I2CADC {
-    adc: Adc,
+pub struct I2CADC<I2C>
+where
+    I2C: embedded_hal::i2c::I2c,
+{
+    adc: ads1x1x::Ads1x1x<
+        ads1x1x::interface::I2cInterface<I2C>,
+        ads1x1x::ic::Ads1115,
+        ads1x1x::ic::Resolution16Bit,
+        ads1x1x::mode::OneShot,
+    >,
 }
 
-impl I2CADC {
-    pub fn new(i2c: I2C<'static, I2C0>) -> Self {
+impl<I2C> I2CADC<I2C>
+where
+    I2C: embedded_hal::i2c::I2c,
+{
+    pub fn new(i2c: I2C) -> Self {
         let address = SlaveAddr::default();
-        let mut adc: ads1x1x::Ads1x1x<
-            ads1x1x::interface::I2cInterface<I2C<'_, I2C0>>,
-            ads1x1x::ic::Ads1115,
-            ads1x1x::ic::Resolution16Bit,
-            ads1x1x::mode::OneShot,
-        > = Ads1x1x::new_ads1115(i2c, address);
+        let mut adc = Ads1x1x::new_ads1115(i2c, address);
         adc.set_full_scale_range(FullScaleRange::Within6_144V)
             .unwrap();
         I2CADC { adc }
     }
 
-    pub fn read_single(&mut self, pin: AnalogInput) -> f32 {
-        let value = match pin {
-            AnalogInput::Pressure => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA0)).unwrap(),
-            AnalogInput::Generator => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA3)).unwrap(),
-            AnalogInput::Battery => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA2)).unwrap(),
-            // AnalogInput::RegulatorOutput => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA3)).unwrap(),
-        };
-        // println!("analog read: {value} from pin {pin}");
-        let float_value = (value as f32 * 0.1875) / 1000.0;
-        float_value
+    pub fn read_single_mv(&mut self, pin: AnalogInput) -> u16 {
+        let mut value = match pin {
+            AnalogInput::A0 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA0)).unwrap(),
+            AnalogInput::A1 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA1)).unwrap(),
+            AnalogInput::A2 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA2)).unwrap(),
+            AnalogInput::A3 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA3)).unwrap(),
+        } as i32;
+        if value < 0 {
+            value = 0;
+        }
+        let float_value = value * 3 / 16;
+        float_value as u16
     }
 
-    pub fn read_all(&mut self) -> I2CADCRead {
+    pub fn read_all_mv(&mut self) -> I2CADCRead {
         I2CADCRead {
-            pressure: self.read_single(AnalogInput::Pressure),
-            generator: self.read_single(AnalogInput::Generator),
-            battery: self.read_single(AnalogInput::Battery),
-            // regulator_output: self.read_single(AnalogInput::RegulatorOutput)
+            a0: self.read_single_mv(AnalogInput::A0),
+            a1: self.read_single_mv(AnalogInput::A1),
+            a2: self.read_single_mv(AnalogInput::A2),
+            a3: self.read_single_mv(AnalogInput::A3),
         }
+    }
+
+    pub fn destroy(self) -> I2C {
+        self.adc.destroy_ads1115()
     }
 }
