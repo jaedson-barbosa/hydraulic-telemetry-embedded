@@ -93,7 +93,11 @@ where
     loop {
         let response = i2c.read(8, &mut buffer);
         match response {
-            Ok(_) => break AttinyResponse::deserialize_from(&buffer),
+            Ok(_) => {
+                let data = AttinyResponse::deserialize_from(&buffer);
+                println!("Read data: {data:?}");
+                break data;
+            }
             Err(v) => println!("Error while receiving i2c data: {v:?}"),
         }
     }
@@ -107,7 +111,7 @@ where
     if *current_charger_en == desired_charger_en {
         return;
     }
-    let set_command = AttinyRequest::UpdateChargerEn(desired_charger_en).serialize();
+    let set_command: [u8; 2] = AttinyRequest::UpdateChargerEn(desired_charger_en).serialize();
     let res = i2c.write(8, &set_command);
     match res {
         Ok(_) => {
@@ -139,8 +143,7 @@ where
 #[embassy_executor::task]
 async fn i2c_controller(mut i2c: I2C<'static, I2C0>) {
     let initial_state = read_initial_attiny_state(&mut i2c);
-    let mut current_charger_en = true;
-
+    let mut current_charger_en = initial_state.charger_en;
     let mut ticker = Ticker::every(Duration::from_secs(1));
     loop {
         ticker.next().await;
@@ -428,7 +431,7 @@ async fn mqtt_read<'a>(socket: &mut TcpReader<'a>, mut outputs_controller: OutCo
                         let topic = v.topic_name;
                         let (state, _) =
                             serde_json_core::from_slice::<ReceiveState>(&v.payload).unwrap();
-                        outputs_controller.charger_en_set(state.enable_charger);
+                        CHARGER_EN.store(state.enable_charger, Ordering::Release);
                         outputs_controller.pressure_en_set(state.enable_pressure);
                         println!("received message on topic {topic} and updated states");
                     }

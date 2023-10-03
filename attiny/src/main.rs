@@ -16,7 +16,7 @@ use attiny_hal as hal;
 use desse::Desse;
 use hal::prelude::*;
 use panic_halt as _;
-use wire::{IoPin, SlavePollEvent, TwoWire};
+use wire::{IoPin, SlavePollEvent, TwoWire, SlaveReadResult};
 use shared::{AttinyRequest,AttinyResponse};
 
 // fn enable_interrupt(dp: &hal::Peripherals) {}
@@ -79,14 +79,26 @@ fn main() -> ! {
         match i2c.slave_poll() {
             SlavePollEvent::StartRead => {
                 let mut buffer = [0u8; 2];
-                // TODO prepare code for invalid request sizes
+                let mut already_stopped = false;
                 for byte in buffer.iter_mut() {
                     match i2c.slave_read() {
-                        wire::SlaveReadResult::Stop(v) => match v {
-                            Some(v) => *byte = v,
-                            None => continue 'main_loop
+                        SlaveReadResult::Stop(v) => match v {
+                            Some(v) => {
+                                *byte = v;
+                                already_stopped = true;
+                            },
+                            None => continue 'main_loop // invalid none
                         },
-                        wire::SlaveReadResult::Continue(v) => *byte = v
+                        SlaveReadResult::Continue(v) => *byte = v
+                    }
+                }
+                if !already_stopped {
+                    match i2c.slave_read() {
+                        SlaveReadResult::Stop(v) => match v {
+                            Some(_) => continue 'main_loop, // invalid stop,
+                            None => {}
+                        },
+                        SlaveReadResult::Continue(_) => continue 'main_loop, // invalid continue,
                     }
                 }
                 let request = AttinyRequest::deserialize_from(&buffer);
