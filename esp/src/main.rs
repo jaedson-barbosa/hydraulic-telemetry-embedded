@@ -11,7 +11,6 @@
 
 mod i2c_adc;
 mod int_adc;
-mod out_control;
 
 use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use desse::Desse;
@@ -49,13 +48,12 @@ use hal::{
     prelude::*,
     systimer::SystemTimer,
     timer::TimerGroup,
-    Rng, Rtc,
+    Rng, Rtc, adc::{AdcConfig, AdcCalCurve, ADC1, ADC},
 };
 use i2c_adc::I2CADC;
+use int_adc::{IntADC, ATTENUATION};
 use mqttrs::{decode_slice, encode_slice, SubscribeTopic};
 use shared::{AttinyRequest, AttinyResponse};
-
-use crate::out_control::OutControl;
 
 const SSID: &str = dotenv!("SSID");
 const PASSWORD: &str = dotenv!("PASSWORD");
@@ -71,6 +69,8 @@ macro_rules! singleton {
 
 static N_PULSES: AtomicU16 = AtomicU16::new(0);
 static CHARGER_EN: AtomicBool = AtomicBool::new(false);
+static PRESSURE_EN: AtomicBool = AtomicBool::new(false);
+static PRESSURE_MV: AtomicU16 = AtomicU16::new(0);
 static A0_TENSION: AtomicU16 = AtomicU16::new(0);
 static A1_TENSION: AtomicU16 = AtomicU16::new(0);
 static A2_TENSION: AtomicU16 = AtomicU16::new(0);
@@ -162,6 +162,22 @@ async fn i2c_controller(mut i2c: I2C<'static, I2C0>) {
 }
 
 #[embassy_executor::task]
+async fn pressure_monitor(mut int_adc: IntADC, mut pressure_en_pin: GpioPin<Output<PushPull>, 7>) {
+    let mut ticker = Ticker::every(Duration::from_secs(1));
+    pressure_en_pin.set_high().unwrap();
+    loop {
+        ticker.next().await;
+        if PRESSURE_EN.load(Ordering::Acquire) {
+            pressure_en_pin.set_low().unwrap(); // enable on low state
+        } else {
+            pressure_en_pin.set_high().unwrap();
+        }
+        let read = int_adc.read_mv(&int_adc::IntADCInput::GPIO2);
+        PRESSURE_MV.store(read as u16, Ordering::Release);
+    }
+}
+
+#[embassy_executor::task]
 async fn main(spawner: Spawner) {
     let peripherals = Peripherals::take();
 
@@ -197,6 +213,26 @@ async fn main(spawner: Spawner) {
     ));
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
+
+    let internal_adc = {
+        let analog = peripherals.APB_SARADC.split();
+        let mut adc1_config = AdcConfig::new();
+        let analog1 = adc1_config
+            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio2.into_analog(), ATTENUATION);
+        let analog2 = adc1_config
+            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio4.into_analog(), ATTENUATION);
+        let adc1 =
+            ADC::<ADC1>::adc(&mut peripheral_clock_control, analog.adc1, adc1_config).unwrap();
+        IntADC {
+            analog1,
+            analog2,
+            adc1,
+        }
+    };
+    spawner.spawn(pressure_monitor(internal_adc, io.pins.gpio7.into_push_pull_output())).ok();
+    let mut led = io.pins.gpio3.into_push_pull_output();
+
+    led.set_high().unwrap();
     let pulse_pin = io.pins.gpio10.into_pull_down_input();
     interrupt::enable(peripherals::Interrupt::GPIO, interrupt::Priority::Priority1).unwrap();
     interrupt::enable(
@@ -239,28 +275,10 @@ async fn main(spawner: Spawner) {
         .unwrap();
     channel0.set_duty(50).unwrap();
 
-    let out_control = OutControl::new(io.pins.gpio6, io.pins.gpio7);
-
-    /*let internal_adc = {
-        let analog = peripherals.APB_SARADC.split();
-        let mut adc1_config = AdcConfig::new();
-        let analog1 = adc1_config
-            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio2.into_analog(), ATTENUATION);
-        let analog2 = adc1_config
-            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio4.into_analog(), ATTENUATION);
-        let adc1 =
-            ADC::<ADC1>::adc(&mut peripheral_clock_control, analog.adc1, adc1_config).unwrap();
-        IntADC {
-            analog1,
-            analog2,
-            adc1,
-        }
-    };*/
-
     spawner.spawn(pulse_counter(pulse_pin)).ok();
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(&stack)).ok();
-    spawner.spawn(task(&stack, out_control)).ok();
+    spawner.spawn(task(&stack)).ok();
 }
 
 #[embassy_executor::task]
@@ -355,6 +373,7 @@ async fn subscribe_mqtt_topics<'a>(socket: &mut TcpSocket<'a>) {
 #[derive(serde::Serialize, Debug)]
 struct PublishState {
     n_pulses: u16,
+    pressure_mv: u16,
     a0: u16,
     a1: u16,
     a2: u16,
@@ -371,41 +390,41 @@ async fn mqtt_publish<'a, 'b>(socket: &mut TcpWriter<'a>) {
     // let mut ping_buffer = [0u8; 1024];
     // let ping = mqttrs::Packet::Pingreq {};
     // let ping_size = encode_slice(&ping, &mut ping_buffer).unwrap();
-    let mut ping = false;
+    // let mut ping = false;
     let mut buffer = [0u8; 1024];
-
-    let mut ticker = Ticker::every(Duration::from_secs(2));
+    let mut ticker = Ticker::every(Duration::from_secs(1));
     loop {
         ticker.next().await;
-        if ping {
+        // if ping {
             // socket.write(&ping_buffer[..ping_size]).await.unwrap();
-        } else {
-            let n_pulses = N_PULSES.fetch_min(0, Ordering::Acquire);
-            // let battery_mv = i2c_adc.read_mv(&AnalogInput::Battery);
-            let state = PublishState {
-                n_pulses,
-                a0: A0_TENSION.load(Ordering::Acquire),
-                a1: A1_TENSION.load(Ordering::Acquire),
-                a2: A2_TENSION.load(Ordering::Acquire),
-                a3: A3_TENSION.load(Ordering::Acquire),
-            };
-            let json = serde_json_core::to_string::<PublishState, 256>(&state).unwrap();
-            let publish = mqttrs::Publish {
-                dup: false,
-                payload: json.as_bytes(),
-                qospid: mqttrs::QosPid::AtMostOnce,
-                retain: false,
-                topic_name: "jaedson/tocloud",
-            };
-            let size = encode_slice(&publish.into(), &mut buffer).unwrap();
-            socket.write(&buffer[..size]).await.unwrap();
-        }
+        // } else {
+        let n_pulses = N_PULSES.fetch_min(0, Ordering::Acquire);
+        // let battery_mv = i2c_adc.read_mv(&AnalogInput::Battery);
+        let state = PublishState {
+            n_pulses,
+            pressure_mv: PRESSURE_MV.load(Ordering::Acquire),
+            a0: A0_TENSION.load(Ordering::Acquire),
+            a1: A1_TENSION.load(Ordering::Acquire),
+            a2: A2_TENSION.load(Ordering::Acquire),
+            a3: A3_TENSION.load(Ordering::Acquire),
+        };
+        let json = serde_json_core::to_string::<PublishState, 256>(&state).unwrap();
+        let publish = mqttrs::Publish {
+            dup: false,
+            payload: json.as_bytes(),
+            qospid: mqttrs::QosPid::AtMostOnce,
+            retain: false,
+            topic_name: "jaedson/tocloud",
+        };
+        let size = encode_slice(&publish.into(), &mut buffer).unwrap();
+        socket.write(&buffer[..size]).await.unwrap();
+        // }
         socket.flush().await.unwrap();
-        ping = !ping;
+        // ping = !ping;
     }
 }
 
-async fn mqtt_read<'a>(socket: &mut TcpReader<'a>, mut outputs_controller: OutControl) {
+async fn mqtt_read<'a>(socket: &mut TcpReader<'a>) {
     let mut buffer = [0u8; 1024];
 
     loop {
@@ -432,7 +451,7 @@ async fn mqtt_read<'a>(socket: &mut TcpReader<'a>, mut outputs_controller: OutCo
                         let (state, _) =
                             serde_json_core::from_slice::<ReceiveState>(&v.payload).unwrap();
                         CHARGER_EN.store(state.enable_charger, Ordering::Release);
-                        outputs_controller.pressure_en_set(state.enable_pressure);
+                        PRESSURE_EN.store(state.enable_pressure, Ordering::Release);
                         println!("received message on topic {topic} and updated states");
                     }
                     v => println!("received: {v:?}"),
@@ -451,7 +470,7 @@ async fn net_task(stack: &'static Stack<WifiDevice<'static>>) {
 }
 
 #[embassy_executor::task]
-async fn task(stack: &'static Stack<WifiDevice<'static>>, outputs_controller: OutControl) {
+async fn task(stack: &'static Stack<WifiDevice<'static>>) {
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
 
@@ -476,7 +495,7 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>, outputs_controller: Ou
     //     .dns_query("12345678", DnsQueryType::A)
     //     .await
     //     .unwrap()[0];
-    let address = Ipv4Address::new(192, 168, 1, 107);
+    let address = Ipv4Address::new(192, 168, 1, 106); // start broker and fix ip
     let mut socket = TcpSocket::new(&stack, &mut rx_buffer, &mut tx_buffer);
     socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
@@ -490,7 +509,7 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>, outputs_controller: Ou
 
     let (mut reader, mut writer) = socket.split();
     let _result = core::future::join!(
-        mqtt_read(&mut reader, outputs_controller),
+        mqtt_read(&mut reader),
         mqtt_publish(&mut writer)
     )
     .await;
