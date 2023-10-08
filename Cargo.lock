@@ -90,6 +90,7 @@ dependencies = [
  "ads1x1x",
  "attiny-hal",
  "avr-device",
+ "avr-hal-generic",
  "desse",
  "embedded-hal 1.0.0-rc.1",
  "heapless",
