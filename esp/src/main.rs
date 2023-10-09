@@ -10,7 +10,6 @@
 // board repo in https://github.com/Xinyuan-LilyGO/LilyGo-T-OI-PLUS
 
 mod i2c_adc;
-mod int_adc;
 
 use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use desse::Desse;
@@ -48,10 +47,9 @@ use hal::{
     prelude::*,
     systimer::SystemTimer,
     timer::TimerGroup,
-    Rng, Rtc, adc::{AdcConfig, AdcCalCurve, ADC1, ADC},
+    Rng, Rtc,
 };
 use i2c_adc::I2CADC;
-use int_adc::{IntADC, ATTENUATION};
 use mqttrs::{decode_slice, encode_slice, SubscribeTopic};
 use shared::{AttinyRequest, AttinyResponse};
 
@@ -70,7 +68,6 @@ macro_rules! singleton {
 static N_PULSES: AtomicU16 = AtomicU16::new(0);
 static CHARGER_EN: AtomicBool = AtomicBool::new(false);
 static PRESSURE_EN: AtomicBool = AtomicBool::new(false);
-static PRESSURE_MV: AtomicU16 = AtomicU16::new(0);
 static A0_TENSION: AtomicU16 = AtomicU16::new(0);
 static A1_TENSION: AtomicU16 = AtomicU16::new(0);
 static A2_TENSION: AtomicU16 = AtomicU16::new(0);
@@ -162,7 +159,7 @@ async fn i2c_controller(mut i2c: I2C<'static, I2C0>) {
 }
 
 #[embassy_executor::task]
-async fn pressure_monitor(mut int_adc: IntADC, mut pressure_en_pin: GpioPin<Output<PushPull>, 7>) {
+async fn pressure_monitor(mut pressure_en_pin: GpioPin<Output<PushPull>, 7>) {
     let mut ticker = Ticker::every(Duration::from_secs(1));
     pressure_en_pin.set_high().unwrap();
     loop {
@@ -172,8 +169,6 @@ async fn pressure_monitor(mut int_adc: IntADC, mut pressure_en_pin: GpioPin<Outp
         } else {
             pressure_en_pin.set_high().unwrap();
         }
-        let read = int_adc.read_mv(&int_adc::IntADCInput::GPIO2);
-        PRESSURE_MV.store(read as u16, Ordering::Release);
     }
 }
 
@@ -214,22 +209,7 @@ async fn main(spawner: Spawner) {
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
-    let internal_adc = {
-        let analog = peripherals.APB_SARADC.split();
-        let mut adc1_config = AdcConfig::new();
-        let analog1 = adc1_config
-            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio2.into_analog(), ATTENUATION);
-        let analog2 = adc1_config
-            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio4.into_analog(), ATTENUATION);
-        let adc1 =
-            ADC::<ADC1>::adc(&mut peripheral_clock_control, analog.adc1, adc1_config).unwrap();
-        IntADC {
-            analog1,
-            analog2,
-            adc1,
-        }
-    };
-    spawner.spawn(pressure_monitor(internal_adc, io.pins.gpio7.into_push_pull_output())).ok();
+    spawner.spawn(pressure_monitor(io.pins.gpio7.into_push_pull_output())).ok();
     let mut led = io.pins.gpio3.into_push_pull_output();
 
     led.set_high().unwrap();
@@ -373,7 +353,6 @@ async fn subscribe_mqtt_topics<'a>(socket: &mut TcpSocket<'a>) {
 #[derive(serde::Serialize, Debug)]
 struct PublishState {
     n_pulses: u16,
-    pressure_mv: u16,
     a0: u16,
     a1: u16,
     a2: u16,
@@ -402,7 +381,6 @@ async fn mqtt_publish<'a, 'b>(socket: &mut TcpWriter<'a>) {
         // let battery_mv = i2c_adc.read_mv(&AnalogInput::Battery);
         let state = PublishState {
             n_pulses,
-            pressure_mv: PRESSURE_MV.load(Ordering::Acquire),
             a0: A0_TENSION.load(Ordering::Acquire),
             a1: A1_TENSION.load(Ordering::Acquire),
             a2: A2_TENSION.load(Ordering::Acquire),
