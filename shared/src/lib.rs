@@ -4,14 +4,13 @@ use desse::{DesseSized, Desse};
 
 #[derive(Debug, PartialEq, Desse, desse::DesseSized)]
 pub struct AttinyResponse {
-    pub charger_en: bool,
+    pub n_pulses: u8,
+    pub generator_mv: u16
 }
 
 #[derive(Debug, PartialEq, Desse, desse::DesseSized)]
 pub enum AttinyRequest {
-    UpdateChargerEn(bool),
-    // /// send last sent value to attiny to reset value
-    // ResetPulses(u16)
+    None
 }
 
 pub fn add(left: usize, right: usize) -> usize {

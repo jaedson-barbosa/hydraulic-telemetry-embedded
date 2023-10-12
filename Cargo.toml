@@ -11,7 +11,6 @@ attiny-hal = { git = "https://github.com/rahix/avr-hal", features = [
     "attiny85",
 ], rev = "7b3e82a15e97e657559ec82cf934ba36c38312ec" }
 avr-hal-generic = { git = "https://github.com/rahix/avr-hal", rev = "7b3e82a15e97e657559ec82cf934ba36c38312ec" }
-ads1x1x = { git = "https://github.com/jaedson-barbosa/ads1x1x-rs.git" }
 strum = { version = "0.25.0", default-features = false, features = ["derive"] }
 nb = "1.1.0"
 desse = "0.2.1"

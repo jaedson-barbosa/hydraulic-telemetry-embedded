@@ -3,15 +3,6 @@
 version = 3
 
 [[package]]
-name = "ads1x1x"
-version = "0.3.0"
-source = "git+https://github.com/jaedson-barbosa/ads1x1x-rs.git#869a58ba22a1569682ee960c1b45a3688c223a28"
-dependencies = [
- "embedded-hal 1.0.0-rc.1",
- "nb 1.1.0",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -87,7 +78,6 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 name = "attiny"
 version = "0.1.0"
 dependencies = [
- "ads1x1x",
  "attiny-hal",
  "avr-device",
  "avr-hal-generic",
@@ -564,7 +554,6 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 name = "esp"
 version = "0.1.0"
 dependencies = [
- "ads1x1x",
  "desse",
  "dotenvy_macro",
  "embassy-executor",

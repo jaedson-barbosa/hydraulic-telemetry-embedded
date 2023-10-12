@@ -9,20 +9,20 @@
 // wifi code examples in https://github.com/esp-rs/esp-wifi/blob/main/examples-esp32c3
 // board repo in https://github.com/Xinyuan-LilyGO/LilyGo-T-OI-PLUS
 
-mod i2c_adc;
+mod int_adc;
 
-use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
-use desse::Desse;
+// use desse::Desse;
 use dotenvy_macro::dotenv;
 use embassy_executor::{Executor, Spawner, _export::StaticCell};
 use embassy_net::{
     // dns::DnsQueryType,
-    tcp::{TcpReader, TcpSocket, TcpWriter},
+    tcp::TcpSocket,
     Config,
     Ipv4Address,
     Stack,
     StackResources,
 };
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Ticker, Timer};
 use embedded_svc::wifi::{AuthMethod, ClientConfiguration, Configuration, Wifi};
 use esp_backtrace as _;
@@ -33,28 +33,31 @@ use esp_wifi::{
     EspWifiInitFor,
 };
 use hal::{
+    adc::{AdcCalCurve, AdcConfig, ADC, ADC1},
     clock::{ClockControl, CpuClock},
     embassy,
-    gpio::{Gpio10, GpioPin, Input, Output, PullDown, PushPull, IO},
-    i2c::I2C,
+    gpio::{GpioPin, Output, PushPull, IO},
+    // i2c::I2C,
     interrupt,
     ledc::{
         channel::{self, ChannelIFace},
         timer::{self, TimerIFace},
         LSGlobalClkSource, LowSpeed, LEDC,
     },
-    peripherals::{self, Peripherals, I2C0},
+    peripherals::{self, Peripherals},
     prelude::*,
     systimer::SystemTimer,
     timer::TimerGroup,
-    Rng, Rtc,
+    Rng,
+    Rtc,
 };
-use i2c_adc::I2CADC;
-use mqttrs::{decode_slice, encode_slice, SubscribeTopic};
-use shared::{AttinyRequest, AttinyResponse};
+use int_adc::{IntADC, ATTENUATION};
+use mqttrs::{decode_slice, encode_slice};
+// use shared::AttinyResponse;
 
 const SSID: &str = dotenv!("SSID");
 const PASSWORD: &str = dotenv!("PASSWORD");
+const PRESSURE_EN: bool = true;
 
 macro_rules! singleton {
     ($val:expr) => {{
@@ -65,13 +68,26 @@ macro_rules! singleton {
     }};
 }
 
-static N_PULSES: AtomicU16 = AtomicU16::new(0);
-static CHARGER_EN: AtomicBool = AtomicBool::new(false);
-static PRESSURE_EN: AtomicBool = AtomicBool::new(false);
-static A0_TENSION: AtomicU16 = AtomicU16::new(0);
-static A1_TENSION: AtomicU16 = AtomicU16::new(0);
-static A2_TENSION: AtomicU16 = AtomicU16::new(0);
-static A3_TENSION: AtomicU16 = AtomicU16::new(0);
+#[derive(serde::Serialize, Clone, Copy, Debug, Default)]
+struct DeviceState {
+    n_pulses: u16,
+    generator_mv: u16,
+    battery_mv: u16,
+    pressure_mv: u16,
+    pressure_en: bool,
+    buck_dc: u8,
+    buck_target: u16,
+}
+
+static STATE: Mutex<CriticalSectionRawMutex, DeviceState> = Mutex::new(DeviceState {
+    battery_mv: 0,
+    buck_dc: 0,
+    generator_mv: 0,
+    n_pulses: 0,
+    pressure_en: PRESSURE_EN,
+    pressure_mv: 0,
+    buck_target: 3900,
+});
 
 #[entry]
 fn entry() -> ! {
@@ -82,89 +98,45 @@ fn entry() -> ! {
     });
 }
 
-fn read_initial_attiny_state<I2C>(i2c: &mut I2C) -> AttinyResponse
-where
-    I2C: embedded_hal::i2c::I2c,
-{
-    let mut buffer = [0u8; 1];
-    loop {
-        let response = i2c.read(8, &mut buffer);
-        match response {
-            Ok(_) => {
-                let data = AttinyResponse::deserialize_from(&buffer);
-                println!("Read data: {data:?}");
-                break data;
-            }
-            Err(v) => println!("Error while receiving i2c data: {v:?}"),
-        }
-    }
-}
+// async fn read_attiny_state<I2C>(i2c: &mut I2C) -> AttinyResponse
+// where
+//     I2C: embedded_hal_async::i2c::I2c,
+// {
+//     let mut buffer = [0u8; 3];
+//     loop {
+//         let response = i2c.read(8, &mut buffer).await;
+//         match response {
+//             Ok(_) => {
+//                 let data = AttinyResponse::deserialize_from(&buffer);
+//                 println!("Read data: {data:?} from buffer: {buffer:?}");
+//                 break data;
+//             }
+//             Err(v) => println!("Error while receiving i2c data: {v:?}"),
+//         }
+//         embassy_time::Timer::after(Duration::from_secs(1)).await;
+//     }
+// }
 
-fn update_charger_en<I2C>(i2c: &mut I2C, current_charger_en: &mut bool)
-where
-    I2C: embedded_hal::i2c::I2c,
-{
-    let desired_charger_en = CHARGER_EN.load(Ordering::Acquire);
-    if *current_charger_en == desired_charger_en {
-        return;
-    }
-    let set_command: [u8; 2] = AttinyRequest::UpdateChargerEn(desired_charger_en).serialize();
-    let res = i2c.write(8, &set_command);
-    match res {
-        Ok(_) => {
-            *current_charger_en = desired_charger_en;
-            println!("Updated charger enable to {current_charger_en}");
-        }
-        Err(v) => println!("Error while writting i2c data: {v:?}"),
-    };
-}
-
-/*fn update_n_pulses<I2C>(i2c: &mut I2C) where I2C: embedded_hal::i2c::I2c {
-    let response = {
-        let request = AttinyCommand::GetNPulses.serialize();
-        let mut response_buffer = [0u8; 3];
-        let res = i2c.write_read(8, &request, &mut response_buffer);
-        match res {
-            Ok(_) => AttinyResponse::deserialize_from(&response_buffer),
-            Err(v) => {
-                println!("Error while receiving i2c data: {v:?}");
-                return;
-            }
-        }
-    };
-    match response {
-        AttinyResponse::NPulses(val) => N_PULSES.store(val, Ordering::Release)
-    }
-}*/
+// #[embassy_executor::task]
+// async fn i2c_controller(mut i2c: I2C<'static, I2C0>) {
+//     loop {
+//         embassy_time::Timer::after(Duration::from_secs(1)).await;
+//         println!("Reading ATTINY state...");
+//         let attiny_state = read_attiny_state(&mut i2c).await;
+//         let mut state = STATE.lock().await;
+//         state.n_pulses += 1;
+//         state.generator_mv = attiny_state.generator_mv;
+//     }
+// }
 
 #[embassy_executor::task]
-async fn i2c_controller(mut i2c: I2C<'static, I2C0>) {
-    let initial_state = read_initial_attiny_state(&mut i2c);
-    let mut current_charger_en = initial_state.charger_en;
-    let mut ticker = Ticker::every(Duration::from_secs(1));
-    loop {
-        ticker.next().await;
-        update_charger_en(&mut i2c, &mut current_charger_en);
-        // TODO uncomment after implementing this in attiny
-        // update_n_pulses(&mut i2c);
-        let mut i2c_adc = I2CADC::new(i2c);
-        let i2c_read = i2c_adc.read_all_mv();
-        A0_TENSION.store(i2c_read.a0, Ordering::Release);
-        A1_TENSION.store(i2c_read.a1, Ordering::Release);
-        A2_TENSION.store(i2c_read.a2, Ordering::Release);
-        A3_TENSION.store(i2c_read.a3, Ordering::Release);
-        i2c = i2c_adc.destroy();
-        println!("Read analog inputs: {i2c_read:?}");
-    }
-}
-
-#[embassy_executor::task]
-async fn pressure_monitor(mut pressure_en_pin: GpioPin<Output<PushPull>, 7>) {
+async fn pressure_monitor(mut pressure_en_pin: GpioPin<Output<PushPull>, 18>) {
     let mut ticker = Ticker::every(Duration::from_secs(1));
     pressure_en_pin.set_high().unwrap();
     loop {
         ticker.next().await;
-        if PRESSURE_EN.load(Ordering::Acquire) {
+        let state = STATE.lock().await;
+        if state.pressure_en {
             pressure_en_pin.set_low().unwrap(); // enable on low state
         } else {
             pressure_en_pin.set_high().unwrap();
@@ -173,11 +145,24 @@ async fn pressure_monitor(mut pressure_en_pin: GpioPin<Output<PushPull>, 7>) {
 }
 
 #[embassy_executor::task]
+async fn int_adc_monitor(mut int_adc: IntADC) {
+    let mut ticker = Ticker::every(Duration::from_millis(100));
+    loop {
+        ticker.next().await;
+        let read = int_adc.read_mv();
+        let mut state = STATE.lock().await;
+        state.pressure_mv = read.gpio2;
+        state.battery_mv = read.gpio4 * 2;
+    }
+}
+
+#[embassy_executor::task]
 async fn main(spawner: Spawner) {
     let peripherals = Peripherals::take();
 
     let system = peripherals.SYSTEM.split();
-    let clocks = ClockControl::configure(system.clock_control, CpuClock::Clock160MHz).freeze();
+    let clocks =
+        &*singleton!(ClockControl::configure(system.clock_control, CpuClock::Clock160MHz).freeze());
     let mut peripheral_clock_control = system.peripheral_clock_control;
     let mut rtc = Rtc::new(peripherals.RTC_CNTL);
     rtc.swd.disable();
@@ -209,11 +194,31 @@ async fn main(spawner: Spawner) {
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
-    spawner.spawn(pressure_monitor(io.pins.gpio7.into_push_pull_output())).ok();
+    let internal_adc = {
+        let analog = peripherals.APB_SARADC.split();
+        let mut adc1_config = AdcConfig::new();
+        let analog1 = adc1_config
+            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio2.into_analog(), ATTENUATION);
+        let analog2 = adc1_config
+            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio4.into_analog(), ATTENUATION);
+        let adc1 =
+            ADC::<ADC1>::adc(&mut peripheral_clock_control, analog.adc1, adc1_config).unwrap();
+        IntADC {
+            analog1,
+            analog2,
+            adc1,
+        }
+    };
+    spawner.spawn(int_adc_monitor(internal_adc)).ok();
+
+    spawner
+        .spawn(pressure_monitor(io.pins.gpio18.into_push_pull_output()))
+        .ok();
     let mut led = io.pins.gpio3.into_push_pull_output();
 
     led.set_high().unwrap();
-    let pulse_pin = io.pins.gpio10.into_pull_down_input();
+    let pulse_pin: GpioPin<hal::gpio::Input<hal::gpio::PullDown>, 10> =
+        io.pins.gpio10.into_pull_down_input();
     interrupt::enable(peripherals::Interrupt::GPIO, interrupt::Priority::Priority1).unwrap();
     interrupt::enable(
         peripherals::Interrupt::I2C_EXT0,
@@ -221,17 +226,15 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
 
-    let i2c = I2C::new(
-        peripherals.I2C0,
-        io.pins.gpio18,
-        io.pins.gpio19,
-        32u32.kHz(),
-        &mut peripheral_clock_control,
-        &clocks,
-    );
-    spawner.spawn(i2c_controller(i2c)).ok();
-
-    let pressure_pwm_pin: GpioPin<Output<PushPull>, 5> = io.pins.gpio5.into_push_pull_output();
+    // let i2c = I2C::new(
+    //     peripherals.I2C0,
+    //     io.pins.gpio6,
+    //     io.pins.gpio7,
+    //     32u32.kHz(),
+    //     &mut peripheral_clock_control,
+    //     &clocks,
+    // );
+    // spawner.spawn(i2c_controller(i2c)).ok();
 
     let mut ledc = LEDC::new(peripherals.LEDC, &clocks, &mut peripheral_clock_control);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
@@ -245,6 +248,7 @@ async fn main(spawner: Spawner) {
         })
         .unwrap();
 
+    let pressure_pwm_pin: GpioPin<Output<PushPull>, 5> = io.pins.gpio5.into_push_pull_output();
     let mut channel0 = ledc.get_channel(channel::Number::Channel0, pressure_pwm_pin);
     channel0
         .configure(channel::config::Config {
@@ -255,25 +259,66 @@ async fn main(spawner: Spawner) {
         .unwrap();
     channel0.set_duty(50).unwrap();
 
+    let buck_pwm_pin: GpioPin<Output<PushPull>, 19> = io.pins.gpio19.into_push_pull_output();
+
     spawner.spawn(pulse_counter(pulse_pin)).ok();
-    spawner.spawn(connection(controller)).ok();
+    spawner.spawn(wifi_controller_task(controller)).ok();
     spawner.spawn(net_task(&stack)).ok();
-    spawner.spawn(task(&stack)).ok();
+    spawner.spawn(publish_mqtt_task(&stack)).ok();
+    spawner
+        .spawn(buck_pwm_controller_task(ledc, buck_pwm_pin))
+        .ok();
 }
 
 #[embassy_executor::task]
-async fn pulse_counter(mut pin: Gpio10<Input<PullDown>>) {
+async fn pulse_counter(mut pin: GpioPin<hal::gpio::Input<hal::gpio::PullDown>, 10>) {
     loop {
-        println!("waiting...");
+        println!("waiting pulse...");
         pin.wait_for_rising_edge().await.unwrap();
-        let n_pulses: u16 = N_PULSES.fetch_add(1, Ordering::Release) + 1;
-        println!("number of pulses: {n_pulses}");
         Timer::after(Duration::from_millis(10)).await;
+        let mut state = STATE.lock().await;
+        state.n_pulses += 1;
     }
 }
 
 #[embassy_executor::task]
-async fn connection(mut controller: WifiController<'static>) {
+async fn buck_pwm_controller_task(
+    ledc: LEDC<'static>,
+    buck_pwm_pin: GpioPin<Output<PushPull>, 19>,
+) {
+    let mut lstimer1 = ledc.get_timer::<LowSpeed>(timer::Number::Timer1);
+    lstimer1
+        .configure(timer::config::Config {
+            duty: timer::config::Duty::Duty8Bit,
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: 100u32.kHz(),
+        })
+        .unwrap();
+
+    let mut buck_pwm_channel = ledc.get_channel(channel::Number::Channel1, buck_pwm_pin);
+    buck_pwm_channel
+        .configure(channel::config::Config {
+            timer: &lstimer1,
+            duty_pct: 100,
+            pin_config: channel::config::PinConfig::PushPull,
+        })
+        .unwrap();
+
+    let mut ticker = Ticker::every(Duration::from_millis(100));
+    loop {
+        ticker.next().await;
+        let mut state = STATE.lock().await;
+        if state.battery_mv > state.buck_target && state.buck_dc > 0 {
+            state.buck_dc -= 1;
+        } else if state.battery_mv < state.buck_target && state.buck_dc < 100 {
+            state.buck_dc += 1;
+        }
+        buck_pwm_channel.set_duty(state.buck_dc).unwrap();
+    }
+}
+
+#[embassy_executor::task]
+async fn wifi_controller_task(mut controller: WifiController<'static>) {
     println!("start connection task");
     println!("Device capabilities: {:?}", controller.get_capabilities());
     loop {
@@ -281,7 +326,7 @@ async fn connection(mut controller: WifiController<'static>) {
             WifiState::StaConnected => {
                 // wait until we're no longer connected
                 controller.wait_for_event(WifiEvent::StaDisconnected).await;
-                Timer::after(Duration::from_millis(5000)).await
+                Timer::after(Duration::from_secs(5)).await
             }
             _ => {}
         }
@@ -304,7 +349,7 @@ async fn connection(mut controller: WifiController<'static>) {
             Ok(_) => println!("Wifi connected!"),
             Err(e) => {
                 println!("Failed to connect to wifi: {e:?}");
-                Timer::after(Duration::from_millis(5000)).await
+                Timer::after(Duration::from_secs(5)).await
             }
         }
     }
@@ -329,166 +374,84 @@ async fn connect_mqtt<'a>(socket: &mut TcpSocket<'a>) {
     println!("{decoded:?}");
 }
 
-async fn subscribe_mqtt_topics<'a>(socket: &mut TcpSocket<'a>) {
-    let mut buffer = [0u8; 1024];
-    let mut topics = heapless::Vec::<SubscribeTopic, 5>::new();
-    topics
-        .push(SubscribeTopic {
-            qos: mqttrs::QoS::AtMostOnce,
-            topic_path: "jaedson/todevice".into(),
-        })
-        .unwrap();
-    let subscribe = mqttrs::Subscribe {
-        pid: mqttrs::Pid::new(),
-        topics,
-    };
-    let size = encode_slice(&subscribe.into(), &mut buffer).unwrap();
-    socket.write(&buffer[..size]).await.unwrap();
-    socket.flush().await.unwrap();
-    let size = socket.read(&mut buffer).await.unwrap();
-    let decoded = decode_slice(&buffer[..size]).unwrap().unwrap();
-    println!("{decoded:?}");
-}
-
-#[derive(serde::Serialize, Debug)]
-struct PublishState {
-    n_pulses: u16,
-    a0: u16,
-    a1: u16,
-    a2: u16,
-    a3: u16,
-}
-
-#[derive(serde::Deserialize, Debug)]
-struct ReceiveState {
-    enable_charger: bool,
-    enable_pressure: bool,
-}
-
-async fn mqtt_publish<'a, 'b>(socket: &mut TcpWriter<'a>) {
-    // let mut ping_buffer = [0u8; 1024];
-    // let ping = mqttrs::Packet::Pingreq {};
-    // let ping_size = encode_slice(&ping, &mut ping_buffer).unwrap();
-    // let mut ping = false;
-    let mut buffer = [0u8; 1024];
-    let mut ticker = Ticker::every(Duration::from_secs(1));
-    loop {
-        ticker.next().await;
-        // if ping {
-            // socket.write(&ping_buffer[..ping_size]).await.unwrap();
-        // } else {
-        let n_pulses = N_PULSES.fetch_min(0, Ordering::Acquire);
-        // let battery_mv = i2c_adc.read_mv(&AnalogInput::Battery);
-        let state = PublishState {
-            n_pulses,
-            a0: A0_TENSION.load(Ordering::Acquire),
-            a1: A1_TENSION.load(Ordering::Acquire),
-            a2: A2_TENSION.load(Ordering::Acquire),
-            a3: A3_TENSION.load(Ordering::Acquire),
-        };
-        let json = serde_json_core::to_string::<PublishState, 256>(&state).unwrap();
-        let publish = mqttrs::Publish {
-            dup: false,
-            payload: json.as_bytes(),
-            qospid: mqttrs::QosPid::AtMostOnce,
-            retain: false,
-            topic_name: "jaedson/tocloud",
-        };
-        let size = encode_slice(&publish.into(), &mut buffer).unwrap();
-        socket.write(&buffer[..size]).await.unwrap();
-        // }
-        socket.flush().await.unwrap();
-        // ping = !ping;
-    }
-}
-
-async fn mqtt_read<'a>(socket: &mut TcpReader<'a>) {
-    let mut buffer = [0u8; 1024];
-
-    loop {
-        Timer::after(Duration::from_millis(1_000)).await;
-
-        match socket.read(&mut buffer).await {
-            Ok(size) => {
-                if size == 0 {
-                    continue;
-                }
-                let decoded = match decode_slice(&buffer[..size]) {
-                    Ok(v) => match v {
-                        Some(v) => v,
-                        None => continue,
-                    },
-                    Err(e) => {
-                        println!("error while parsing: {e:?}");
-                        continue;
-                    }
-                };
-                match decoded {
-                    mqttrs::Packet::Publish(v) => {
-                        let topic = v.topic_name;
-                        let (state, _) =
-                            serde_json_core::from_slice::<ReceiveState>(&v.payload).unwrap();
-                        CHARGER_EN.store(state.enable_charger, Ordering::Release);
-                        PRESSURE_EN.store(state.enable_pressure, Ordering::Release);
-                        println!("received message on topic {topic} and updated states");
-                    }
-                    v => println!("received: {v:?}"),
-                }
-            }
-            Err(e) => {
-                println!("error while reading: {e:?}")
-            }
-        }
-    }
-}
-
 #[embassy_executor::task]
 async fn net_task(stack: &'static Stack<WifiDevice<'static>>) {
     stack.run().await
 }
 
 #[embassy_executor::task]
-async fn task(stack: &'static Stack<WifiDevice<'static>>) {
+async fn publish_mqtt_task(stack: &'static Stack<WifiDevice<'static>>) {
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
 
     loop {
-        if stack.is_link_up() {
-            break;
+        loop {
+            if stack.is_link_up() {
+                break;
+            }
+            Timer::after(Duration::from_millis(500)).await;
         }
-        Timer::after(Duration::from_millis(500)).await;
-    }
 
-    println!("Waiting to get IP address...");
-    loop {
-        if let Some(config) = stack.config_v4() {
-            println!("Got IP: {}", config.address);
-            break;
+        println!("Waiting to get IP address...");
+
+        loop {
+            if let Some(config) = stack.config_v4() {
+                println!("Got IP: {}", config.address);
+                break;
+            }
+            Timer::after(Duration::from_millis(500)).await;
         }
-        Timer::after(Duration::from_millis(500)).await;
+
+        Timer::after(Duration::from_millis(1_000)).await;
+        // let address: embassy_net::IpAddress = stack
+        //     .dns_query("12345678", DnsQueryType::A)
+        //     .await
+        //     .unwrap()[0];
+        let address = Ipv4Address::new(54, 80, 140, 156); // start broker and fix ip
+        let mut socket = TcpSocket::new(&stack, &mut rx_buffer, &mut tx_buffer);
+        socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
+
+        let remote_endpoint = (address, 1883);
+        while let Err(v) = socket.connect(remote_endpoint).await {
+            println!("Error while trying to connect to socket: {v:?}");
+            Timer::after(Duration::from_millis(500)).await;
+        }
+        println!("Connected to remote socket");
+
+        connect_mqtt(&mut socket).await;
+
+        let mut buffer = [0u8; 1024];
+        let mut ticker = Ticker::every(Duration::from_secs(1));
+        loop {
+            ticker.next().await;
+            let json = {
+                let mut state = STATE.lock().await;
+                let json = serde_json_core::to_string::<DeviceState, 256>(&state).unwrap();
+                state.n_pulses = 0;
+                json
+            };
+            let publish = mqttrs::Publish {
+                dup: false,
+                payload: json.as_bytes(),
+                qospid: mqttrs::QosPid::AtMostOnce,
+                retain: false,
+                topic_name: "jaedson/tocloud",
+            };
+            let size = encode_slice(&publish.into(), &mut buffer).unwrap();
+            if let Err(v) = socket.write(&buffer[..size]).await {
+                match v {
+                    embassy_net::tcp::Error::ConnectionReset => {
+                        break;
+                    }
+                }
+            };
+            if let Err(v) = socket.flush().await {
+                match v {
+                    embassy_net::tcp::Error::ConnectionReset => {
+                        break;
+                    }
+                }
+            };
+        }
     }
-
-    Timer::after(Duration::from_millis(1_000)).await;
-    // let address: embassy_net::IpAddress = stack
-    //     .dns_query("12345678", DnsQueryType::A)
-    //     .await
-    //     .unwrap()[0];
-    let address = Ipv4Address::new(192, 168, 1, 106); // start broker and fix ip
-    let mut socket = TcpSocket::new(&stack, &mut rx_buffer, &mut tx_buffer);
-    socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
-
-    println!("connecting...");
-    let remote_endpoint = (address, 1883);
-    socket.connect(remote_endpoint).await.unwrap();
-    println!("connected!");
-
-    connect_mqtt(&mut socket).await;
-    subscribe_mqtt_topics(&mut socket).await;
-
-    let (mut reader, mut writer) = socket.split();
-    let _result = core::future::join!(
-        mqtt_read(&mut reader),
-        mqtt_publish(&mut writer)
-    )
-    .await;
 }
