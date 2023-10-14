@@ -9,7 +9,7 @@
 // wifi code examples in https://github.com/esp-rs/esp-wifi/blob/main/examples-esp32c3
 // board repo in https://github.com/Xinyuan-LilyGO/LilyGo-T-OI-PLUS
 
-mod digital_inputs;
+mod digital_input;
 mod i2c_adc;
 mod int_adc;
 mod temperature;
