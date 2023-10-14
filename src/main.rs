@@ -11,7 +11,6 @@
 
 mod int_adc;
 
-// use desse::Desse;
 use dotenvy_macro::dotenv;
 use embassy_executor::{Executor, Spawner, _export::StaticCell};
 use embassy_net::{
@@ -33,7 +32,6 @@ use esp_wifi::{
     EspWifiInitFor,
 };
 use hal::{
-    adc::{AdcConfig, ADC, ADC1},
     clock::ClockControl,
     embassy,
     gpio::{GpioPin, Output, PushPull, IO},
@@ -47,11 +45,10 @@ use hal::{
     peripherals::{self, Peripherals},
     prelude::*,
     timer::TimerGroup,
-    Rng
+    Rng,
 };
-use int_adc::{IntADC, ATTENUATION};
+use int_adc::IntADC;
 use mqttrs::{decode_slice, encode_slice};
-// use shared::AttinyResponse;
 
 const SSID: &str = dotenv!("SSID");
 const PASSWORD: &str = dotenv!("PASSWORD");
@@ -149,8 +146,8 @@ async fn int_adc_monitor(mut int_adc: IntADC) {
         ticker.next().await;
         let read = int_adc.read_mv();
         let mut state = STATE.lock().await;
-        state.pressure_mv = read.gpio2;
-        state.battery_mv = read.gpio4 * 2;
+        state.pressure_mv = read.gpio36;
+        state.battery_mv = read.gpio39 * 2;
     }
 }
 
@@ -162,11 +159,9 @@ async fn main(spawner: Spawner) {
     let clocks = &*singleton!(ClockControl::boot_defaults(system.clock_control).freeze());
     let mut peripheral_clock_control = system.peripheral_clock_control;
 
-    let timer = hal::timer::TimerGroup::new(
-        peripherals.TIMG1,
-        &clocks,
-        &mut peripheral_clock_control,
-    ).timer0;
+    let timer =
+        hal::timer::TimerGroup::new(peripherals.TIMG1, &clocks, &mut peripheral_clock_control)
+            .timer0;
     let rng = Rng::new(peripherals.RNG);
     let radio_control = system.radio_clock_control;
     let init = initialize(EspWifiInitFor::Wifi, timer, rng, radio_control, &clocks).unwrap();
@@ -192,18 +187,14 @@ async fn main(spawner: Spawner) {
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
-    let internal_adc = {
-        let analog = peripherals.SENS.split();
-        let mut adc1_config = AdcConfig::new();
-        let pin36 = adc1_config.enable_pin(io.pins.gpio36.into_analog(), ATTENUATION);
-        let pin39 = adc1_config.enable_pin(io.pins.gpio39.into_analog(), ATTENUATION);
-        let adc1 = ADC::<ADC1>::adc(analog.adc1, adc1_config).unwrap();
-        IntADC {
-            pin36,
-            pin39,
-            adc1,
-        }
-    };
+    let internal_adc = IntADC::new(
+        peripherals.SENS.split().adc1,
+        io.pins.gpio32,
+        io.pins.gpio34,
+        io.pins.gpio35,
+        io.pins.gpio36,
+        io.pins.gpio39,
+    );
     spawner.spawn(int_adc_monitor(internal_adc)).ok();
 
     spawner
