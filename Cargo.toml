@@ -7,7 +7,7 @@ edition = "2021"
 hal = { package = "esp32-hal", version = "0.15.0", features = [
     "async",
     "embassy-time-timg0",
-    "embassy-executor-thread"
+    "embassy-executor-thread",
 ] }
 esp-backtrace = { version = "0.8.0", features = [
     "esp32",
@@ -51,3 +51,5 @@ serde = { version = "1.0.188", default-features = false, features = ["derive"] }
 serde-json-core = "0.5.1"
 embassy-sync = "0.3.0"
 ads1x1x = "0.2.2"
+one-wire-bus = { version = "0.1.1" }
+ds18b20 = "0.1.1"

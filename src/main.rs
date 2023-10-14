@@ -11,6 +11,7 @@
 
 mod i2c_adc;
 mod int_adc;
+mod temperature;
 
 use dotenvy_macro::dotenv;
 use embassy_executor::{Executor, Spawner, _export::StaticCell};
@@ -51,6 +52,8 @@ use hal::{
 use i2c_adc::I2CADC;
 use int_adc::IntADC;
 use mqttrs::{decode_slice, encode_slice};
+use temperature::Temperature;
+// use one_wire_bus::OneWire;
 
 const SSID: &str = dotenv!("SSID");
 const PASSWORD: &str = dotenv!("PASSWORD");
@@ -214,6 +217,11 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
 
+    let one_wire_pin = io.pins.gpio19.into_open_drain_output();
+    let mut temperature_sensor = Temperature::new(one_wire_pin, hal::Delay::new(&clocks)).unwrap();
+    let temp_read = temperature_sensor.read().unwrap();
+    println!("Temperature: {temp_read:?}");
+
     let i2c = I2C::new(
         peripherals.I2C0,
         io.pins.gpio6,
@@ -249,7 +257,7 @@ async fn main(spawner: Spawner) {
         .unwrap();
     channel0.set_duty(50).unwrap();
 
-    let buck_pwm_pin: GpioPin<Output<PushPull>, 19> = io.pins.gpio19.into_push_pull_output();
+    let buck_pwm_pin: GpioPin<Output<PushPull>, 23> = io.pins.gpio23.into_push_pull_output();
 
     spawner.spawn(pulse_counter(pulse_pin)).ok();
     spawner.spawn(wifi_controller_task(controller)).ok();
@@ -274,7 +282,7 @@ async fn pulse_counter(mut pin: GpioPin<hal::gpio::Input<hal::gpio::PullDown>, 1
 #[embassy_executor::task]
 async fn buck_pwm_controller_task(
     ledc: LEDC<'static>,
-    buck_pwm_pin: GpioPin<Output<PushPull>, 19>,
+    buck_pwm_pin: GpioPin<Output<PushPull>, 23>,
 ) {
     let mut lstimer1 = ledc.get_timer::<LowSpeed>(timer::Number::Timer1);
     lstimer1
