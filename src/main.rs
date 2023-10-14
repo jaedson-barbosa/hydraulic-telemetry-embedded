@@ -33,8 +33,8 @@ use esp_wifi::{
     EspWifiInitFor,
 };
 use hal::{
-    adc::{AdcCalCurve, AdcConfig, ADC, ADC1},
-    clock::{ClockControl, CpuClock},
+    adc::{AdcConfig, ADC, ADC1},
+    clock::ClockControl,
     embassy,
     gpio::{GpioPin, Output, PushPull, IO},
     // i2c::I2C,
@@ -46,10 +46,8 @@ use hal::{
     },
     peripherals::{self, Peripherals},
     prelude::*,
-    systimer::SystemTimer,
     timer::TimerGroup,
-    Rng,
-    Rtc,
+    Rng
 };
 use int_adc::{IntADC, ATTENUATION};
 use mqttrs::{decode_slice, encode_slice};
@@ -160,15 +158,15 @@ async fn int_adc_monitor(mut int_adc: IntADC) {
 async fn main(spawner: Spawner) {
     let peripherals = Peripherals::take();
 
-    let system = peripherals.SYSTEM.split();
-    let clocks =
-        &*singleton!(ClockControl::configure(system.clock_control, CpuClock::Clock160MHz).freeze());
+    let system = peripherals.DPORT.split();
+    let clocks = &*singleton!(ClockControl::boot_defaults(system.clock_control).freeze());
     let mut peripheral_clock_control = system.peripheral_clock_control;
-    let mut rtc = Rtc::new(peripherals.RTC_CNTL);
-    rtc.swd.disable();
-    rtc.rwdt.disable();
 
-    let timer = SystemTimer::new(peripherals.SYSTIMER).alarm0;
+    let timer = hal::timer::TimerGroup::new(
+        peripherals.TIMG1,
+        &clocks,
+        &mut peripheral_clock_control,
+    ).timer0;
     let rng = Rng::new(peripherals.RNG);
     let radio_control = system.radio_clock_control;
     let init = initialize(EspWifiInitFor::Wifi, timer, rng, radio_control, &clocks).unwrap();
@@ -195,17 +193,14 @@ async fn main(spawner: Spawner) {
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
     let internal_adc = {
-        let analog = peripherals.APB_SARADC.split();
+        let analog = peripherals.SENS.split();
         let mut adc1_config = AdcConfig::new();
-        let analog1 = adc1_config
-            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio2.into_analog(), ATTENUATION);
-        let analog2 = adc1_config
-            .enable_pin_with_cal::<_, AdcCalCurve<ADC1>>(io.pins.gpio4.into_analog(), ATTENUATION);
-        let adc1 =
-            ADC::<ADC1>::adc(&mut peripheral_clock_control, analog.adc1, adc1_config).unwrap();
+        let pin36 = adc1_config.enable_pin(io.pins.gpio36.into_analog(), ATTENUATION);
+        let pin39 = adc1_config.enable_pin(io.pins.gpio39.into_analog(), ATTENUATION);
+        let adc1 = ADC::<ADC1>::adc(analog.adc1, adc1_config).unwrap();
         IntADC {
-            analog1,
-            analog2,
+            pin36,
+            pin39,
             adc1,
         }
     };
