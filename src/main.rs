@@ -9,6 +9,7 @@
 // wifi code examples in https://github.com/esp-rs/esp-wifi/blob/main/examples-esp32c3
 // board repo in https://github.com/Xinyuan-LilyGO/LilyGo-T-OI-PLUS
 
+mod i2c_adc;
 mod int_adc;
 
 use dotenvy_macro::dotenv;
@@ -35,7 +36,7 @@ use hal::{
     clock::ClockControl,
     embassy,
     gpio::{GpioPin, Output, PushPull, IO},
-    // i2c::I2C,
+    i2c::I2C,
     interrupt,
     ledc::{
         channel::{self, ChannelIFace},
@@ -47,6 +48,7 @@ use hal::{
     timer::TimerGroup,
     Rng,
 };
+use i2c_adc::I2CADC;
 use int_adc::IntADC;
 use mqttrs::{decode_slice, encode_slice};
 
@@ -212,14 +214,16 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
 
-    // let i2c = I2C::new(
-    //     peripherals.I2C0,
-    //     io.pins.gpio6,
-    //     io.pins.gpio7,
-    //     32u32.kHz(),
-    //     &mut peripheral_clock_control,
-    //     &clocks,
-    // );
+    let i2c = I2C::new(
+        peripherals.I2C0,
+        io.pins.gpio6,
+        io.pins.gpio7,
+        32u32.kHz(),
+        &mut peripheral_clock_control,
+        &clocks,
+    );
+    let mut i2c_adc = I2CADC::new(i2c);
+    let _read = i2c_adc.read_all_mv();
     // spawner.spawn(i2c_controller(i2c)).ok();
 
     let mut ledc = LEDC::new(peripherals.LEDC, &clocks, &mut peripheral_clock_control);
