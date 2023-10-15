@@ -1,0 +1,46 @@
+Date : 2023-10-15 09:37:46
+Directory : c:\Users\jaeds\projetos\hydraulic-telemetry-embedded
+Total : 17 files,  2188 codes, 23 comments, 282 blanks, all 2493 lines
+
+Languages
++----------+------------+------------+------------+------------+------------+
+| language | files      | code       | comment    | blank      | total      |
++----------+------------+------------+------------+------------+------------+
+| TOML     |          4 |      1,395 |          3 |        165 |      1,563 |
+| Rust     |         12 |        788 |         20 |        117 |        925 |
+| Markdown |          1 |          5 |          0 |          0 |          5 |
++----------+------------+------------+------------+------------+------------+
+
+Directories
++----------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                       | files      | code       | comment    | blank      | total      |
++----------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                          |         17 |      2,188 |         23 |        282 |      2,493 |
+| . (Files)                                                                  |          4 |      1,389 |          3 |        161 |      1,553 |
+| .cargo                                                                     |          1 |         11 |          0 |          4 |         15 |
+| src                                                                        |         12 |        788 |         20 |        117 |        925 |
++----------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++----------------------------------------------------------------------------+----------+------------+------------+------------+------------+
+| filename                                                                   | language | code       | comment    | blank      | total      |
++----------------------------------------------------------------------------+----------+------------+------------+------------+------------+
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\.cargo\config.toml    | TOML     |         11 |          0 |          4 |         15 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\Cargo.lock            | TOML     |      1,328 |          2 |        158 |      1,488 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\Cargo.toml            | TOML     |         54 |          1 |          2 |         57 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\README.md             | Markdown |          5 |          0 |          0 |          5 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\rust-toolchain.toml   | TOML     |          2 |          0 |          1 |          3 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\charger_sepic.rs  | Rust     |         67 |          0 |          9 |         76 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\device_state.rs   | Rust     |         18 |          0 |          6 |         24 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\digital_input.rs  | Rust     |         94 |          0 |         13 |        107 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\i2c_adc.rs        | Rust     |         69 |          0 |         13 |         82 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\int_adc.rs        | Rust     |         72 |          0 |          8 |         80 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\led_output.rs     | Rust     |         58 |          2 |          9 |         69 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\main.rs           | Rust     |        162 |          7 |         27 |        196 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\mqtt.rs           | Rust     |         91 |          5 |         11 |        107 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\pressure_boost.rs | Rust     |         45 |          0 |          7 |         52 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\pulse_counter.rs  | Rust     |         20 |          0 |          5 |         25 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\temperature.rs    | Rust     |         48 |          5 |          5 |         58 |
+| c:\Users\jaeds\projetos\hydraulic-telemetry-embedded\src\wifi.rs           | Rust     |         44 |          1 |          4 |         49 |
+| Total                                                                      |          |      2,188 |         23 |        282 |      2,493 |
++----------------------------------------------------------------------------+----------+------------+------------+------------+------------+
