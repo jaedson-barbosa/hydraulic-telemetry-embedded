@@ -1,22 +1,13 @@
+use core::sync::atomic::{AtomicU16, Ordering};
+
 use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
 use embedded_hal::adc::OneShot;
 use hal::{peripherals::I2C0, i2c::I2C};
 
-#[repr(u8)]
-pub enum AnalogInput {
-    A0,
-    A1,
-    A2,
-    A3,
-}
-
-#[derive(Debug)]
-pub struct I2CADCRead {
-    pub a0: u16,
-    pub a1: u16,
-    pub a2: u16,
-    pub a3: u16,
-}
+static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
+static ESP_VIN_MV: AtomicU16 = AtomicU16::new(0);
+static BUCK_OUT_MV: AtomicU16 = AtomicU16::new(0);
+static PRESSURE_MV: AtomicU16 = AtomicU16::new(0);
 
 pub struct I2CADC
 {
@@ -26,6 +17,41 @@ pub struct I2CADC
         ads1x1x::ic::Resolution16Bit,
         ads1x1x::mode::OneShot,
     >,
+}
+
+#[derive(Debug)]
+pub struct I2CADCRead {
+    battery_mv: u16,
+    esp_vin_mv: u16,
+    buck_out_mv: u16,
+    pressure_mv: u16
+}
+
+impl I2CADCRead {
+    pub fn get() -> Self {
+        Self {
+            battery_mv: Self::get_battery_mv(),
+            esp_vin_mv: Self::get_esp_vin_mv(),
+            buck_out_mv: Self::get_esp_vin_mv(),
+            pressure_mv: Self::get_pressure_mv()
+        }
+    }
+
+    pub fn get_battery_mv() -> u16 {
+        BATTERY_MV.load(Ordering::Acquire)
+    }
+
+    pub fn get_esp_vin_mv() -> u16 {
+        ESP_VIN_MV.load(Ordering::Acquire)
+    }
+
+    pub fn get_buck_out_mv() -> u16 {
+        BUCK_OUT_MV.load(Ordering::Acquire)
+    }
+
+    pub fn get_pressure_mv() -> u16 {
+        PRESSURE_MV.load(Ordering::Acquire)
+    }
 }
 
 impl I2CADC
@@ -38,26 +64,18 @@ impl I2CADC
         I2CADC { adc }
     }
 
-    pub fn read_single_mv(&mut self, pin: AnalogInput) -> u16 {
-        let mut value = match pin {
-            AnalogInput::A0 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA0)).unwrap(),
-            AnalogInput::A1 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA1)).unwrap(),
-            AnalogInput::A2 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA2)).unwrap(),
-            AnalogInput::A3 => nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA3)).unwrap(),
-        } as i32;
-        if value < 0 {
-            value = 0;
-        }
-        let float_value = value * 3 / 16;
-        float_value as u16
+    fn get_mv(val: i16) -> u16 {
+        if val < 0 { 0 } else { (val as u32 * 3 / 16) as u16 }
     }
 
-    pub fn read_all_mv(&mut self) -> I2CADCRead {
-        I2CADCRead {
-            a0: self.read_single_mv(AnalogInput::A0),
-            a1: self.read_single_mv(AnalogInput::A1),
-            a2: self.read_single_mv(AnalogInput::A2),
-            a3: self.read_single_mv(AnalogInput::A3),
-        }
+    pub fn read_all_inputs(&mut self) {
+        let a0 = nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA0)).unwrap();
+        BATTERY_MV.store(Self::get_mv(a0), Ordering::Release);
+        let a1 = nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA1)).unwrap();
+        ESP_VIN_MV.store(Self::get_mv(a1), Ordering::Release);
+        let a2 = nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA2)).unwrap();
+        BUCK_OUT_MV.store(Self::get_mv(a2), Ordering::Release);
+        let a3 = nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA3)).unwrap();
+        PRESSURE_MV.store(Self::get_mv(a3), Ordering::Release);
     }
 }

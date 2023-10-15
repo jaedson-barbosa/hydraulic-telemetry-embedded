@@ -53,3 +53,4 @@ embassy-sync = "0.3.0"
 ads1x1x = "0.2.2"
 one-wire-bus = { version = "0.1.1" }
 ds18b20 = "0.1.1"
+strum = {version="0.25.0", default-features = false, features = ["derive"]}

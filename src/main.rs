@@ -9,9 +9,12 @@
 // wifi code examples in https://github.com/esp-rs/esp-wifi/blob/main/examples-esp32c3
 // board repo in https://github.com/Xinyuan-LilyGO/LilyGo-T-OI-PLUS
 
+mod charger_sepic;
 mod digital_input;
 mod i2c_adc;
 mod int_adc;
+mod led_output;
+mod pressure_boost;
 mod temperature;
 
 use dotenvy_macro::dotenv;
@@ -180,7 +183,6 @@ async fn main(spawner: Spawner) {
     embassy::init(&clocks, timer_group0.timer0);
 
     let config = Config::dhcpv4(Default::default());
-
     let seed = 1234; // very random, very secure seed
 
     // Init network stack
@@ -192,6 +194,8 @@ async fn main(spawner: Spawner) {
     ));
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
+
+    digital_input::start_digital_input_monitor_tasks(&spawner, io.pins.gpio2, io.pins.gpio4, io.pins.gpio16, io.pins.gpio17);
 
     let internal_adc = IntADC::new(
         peripherals.SENS.split().adc1,
@@ -232,7 +236,7 @@ async fn main(spawner: Spawner) {
         &clocks,
     );
     let mut i2c_adc = I2CADC::new(i2c);
-    let _read = i2c_adc.read_all_mv();
+    let _read = i2c_adc.read_all_inputs();
     // spawner.spawn(i2c_controller(i2c)).ok();
 
     let mut ledc = LEDC::new(peripherals.LEDC, &clocks, &mut peripheral_clock_control);

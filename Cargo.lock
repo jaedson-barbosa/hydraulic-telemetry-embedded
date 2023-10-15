@@ -494,6 +494,7 @@ dependencies = [
  "one-wire-bus",
  "serde",
  "serde-json-core",
+ "strum 0.25.0",
 ]
 
 [[package]]
