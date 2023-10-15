@@ -7,11 +7,11 @@ use hal::{
     },
 };
 
-pub struct PressureBoost {
+pub struct PressureController {
     enable_pin: GpioPin<Output<PushPull>, 13>,
 }
 
-impl PressureBoost {
+impl PressureController {
     pub fn new(
         ledc: &'static LEDC<'static>,
         pwm_pin: GpioPin<Unknown, 12>,

@@ -4,6 +4,7 @@ use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
 use embedded_hal::adc::OneShot;
 use hal::{peripherals::I2C0, i2c::I2C};
 
+static BATTERY_MA: AtomicU16 = AtomicU16::new(0);
 static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
 static ESP_VIN_MV: AtomicU16 = AtomicU16::new(0);
 static BUCK_OUT_MV: AtomicU16 = AtomicU16::new(0);
@@ -19,8 +20,9 @@ pub struct I2CADC
     >,
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, Clone, Copy, Debug)]
 pub struct I2CADCRead {
+    battery_ma: u16,
     battery_mv: u16,
     esp_vin_mv: u16,
     buck_out_mv: u16,
@@ -30,11 +32,16 @@ pub struct I2CADCRead {
 impl I2CADCRead {
     pub fn get() -> Self {
         Self {
+            battery_ma: Self::get_battery_ma(),
             battery_mv: Self::get_battery_mv(),
             esp_vin_mv: Self::get_esp_vin_mv(),
-            buck_out_mv: Self::get_esp_vin_mv(),
+            buck_out_mv: Self::get_buck_out_mv(),
             pressure_mv: Self::get_pressure_mv()
         }
+    }
+
+    pub fn get_battery_ma() -> u16 {
+        BATTERY_MA.load(Ordering::Acquire)
     }
 
     pub fn get_battery_mv() -> u16 {
@@ -69,6 +76,8 @@ impl I2CADC
     }
 
     pub fn read_all_inputs(&mut self) {
+        let dif_a0_a1 = nb::block!(self.adc.read(&mut ads1x1x::channel::DifferentialA0A1)).unwrap();
+        BATTERY_MA.store(Self::get_mv(dif_a0_a1), Ordering::Release);
         let a0 = nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA0)).unwrap();
         BATTERY_MV.store(Self::get_mv(a0), Ordering::Release);
         let a1 = nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA1)).unwrap();

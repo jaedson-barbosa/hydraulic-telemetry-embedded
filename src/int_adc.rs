@@ -6,8 +6,8 @@ use hal::{
 
 const N_READS: u32 = 4;
 
-#[derive(Debug)]
-pub struct IntADCRead {
+#[derive(serde::Serialize, Clone, Copy, Debug)]
+pub struct IntADCState {
     pub gpio32: u16,
     pub gpio34: u16,
     pub gpio35: u16,
@@ -61,14 +61,14 @@ impl IntADC {
             / N_READS
     }
 
-    pub fn read_mv(&mut self) -> IntADCRead {
+    pub fn get(&mut self) -> IntADCState {
         let gpio32 = Self::read_pin_mv(&mut self.adc1, &mut self.pin32) as u16;
         let gpio34 = Self::read_pin_mv(&mut self.adc1, &mut self.pin34) as u16;
         let gpio35 = Self::read_pin_mv(&mut self.adc1, &mut self.pin35) as u16;
         let gpio36 = Self::read_pin_mv(&mut self.adc1, &mut self.pin36) as u16;
         let gpio39 = Self::read_pin_mv(&mut self.adc1, &mut self.pin39) as u16;
 
-        IntADCRead {
+        IntADCState {
             gpio32,
             gpio34,
             gpio35,

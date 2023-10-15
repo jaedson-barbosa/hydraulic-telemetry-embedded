@@ -7,28 +7,24 @@ use hal::{
 
 static WIFI_EN: AtomicBool = AtomicBool::new(false);
 static CHARGER_EN: AtomicBool = AtomicBool::new(false);
-static INTERVAL_PIN_0: AtomicBool = AtomicBool::new(false);
-static INTERVAL_PIN_1: AtomicBool = AtomicBool::new(false);
+static PRESSURE_EN: AtomicBool = AtomicBool::new(false);
+static HIGH_FREQ_EN: AtomicBool = AtomicBool::new(false);
 
-pub enum SamplingInterval {
-    Sec1,
-    Sec10,
-    Min1,
-    Min10,
+#[derive(serde::Serialize, Clone, Copy, Debug)]
+pub struct DigitalInputState {
+    pub wifi_en: bool,
+    pub pressure_en: bool,
+    pub charger_en: bool,
+    pub high_freq_en: bool
 }
 
-pub struct DigitalInputRead {
-    wifi_en: bool,
-    charger_en: bool,
-    sampling_interval: SamplingInterval
-}
-
-impl DigitalInputRead {
+impl DigitalInputState {
     pub fn get() -> Self {
         Self {
             wifi_en: Self::get_wifi_en(),
+            pressure_en: Self::get_pressure_en(),
             charger_en: Self::get_charger_en(),
-            sampling_interval: Self::get_sampling_interval()
+            high_freq_en: Self::get_high_freq_en()
         }
     }
 
@@ -40,15 +36,12 @@ impl DigitalInputRead {
         CHARGER_EN.load(Ordering::Acquire)
     }
 
-    pub fn get_sampling_interval() -> SamplingInterval {
-        let pin_0_high = INTERVAL_PIN_0.load(Ordering::Acquire);
-        let pin_1_high = INTERVAL_PIN_1.load(Ordering::Acquire);
-        match (pin_0_high, pin_1_high) {
-            (false, false) => SamplingInterval::Sec1,
-            (true, false) => SamplingInterval::Min1,
-            (false, true) => SamplingInterval::Sec10,
-            (true, true) => SamplingInterval::Min10,
-        }
+    pub fn get_pressure_en() -> bool {
+        PRESSURE_EN.load(Ordering::Acquire)
+    }
+
+    pub fn get_high_freq_en() -> bool {
+        HIGH_FREQ_EN.load(Ordering::Acquire)
     }
 }
 
@@ -56,8 +49,8 @@ pub fn start_digital_input_monitor_tasks(
     spawner: &Spawner,
     wifi_en_pin: GpioPin<Unknown, 2>,
     charger_en_pin: GpioPin<Unknown, 4>,
-    interval_pin_0: GpioPin<Unknown, 16>,
-    interval_pin_1: GpioPin<Unknown, 17>,
+    pressure_en_pin: GpioPin<Unknown, 16>,
+    high_freq_en_pin: GpioPin<Unknown, 17>,
 ) {
     spawner
         .spawn(monitor_wifi_en(wifi_en_pin.into_pull_up_input()))
@@ -66,10 +59,10 @@ pub fn start_digital_input_monitor_tasks(
         .spawn(monitor_charger_en(charger_en_pin.into_pull_up_input()))
         .ok();
     spawner
-        .spawn(monitor_interval_0(interval_pin_0.into_pull_up_input()))
+        .spawn(monitor_pressure_en(pressure_en_pin.into_pull_up_input()))
         .ok();
     spawner
-        .spawn(monitor_interval_1(interval_pin_1.into_pull_up_input()))
+        .spawn(monitor_high_freq_en(high_freq_en_pin.into_pull_up_input()))
         .ok();
 }
 
@@ -90,17 +83,17 @@ async fn monitor_charger_en(mut pin: GpioPin<Input<PullUp>, 4>) {
 }
 
 #[embassy_executor::task]
-async fn monitor_interval_0(mut pin: GpioPin<Input<PullUp>, 16>) {
+async fn monitor_pressure_en(mut pin: GpioPin<Input<PullUp>, 16>) {
     loop {
         pin.wait_for_any_edge().await.unwrap();
-        INTERVAL_PIN_0.store(pin.is_input_high(), Ordering::Release);
+        PRESSURE_EN.store(pin.is_input_high(), Ordering::Release);
     }
 }
 
 #[embassy_executor::task]
-async fn monitor_interval_1(mut pin: GpioPin<Input<PullUp>, 17>) {
+async fn monitor_high_freq_en(mut pin: GpioPin<Input<PullUp>, 17>) {
     loop {
         pin.wait_for_any_edge().await.unwrap();
-        INTERVAL_PIN_1.store(pin.is_input_high(), Ordering::Release);
+        HIGH_FREQ_EN.store(pin.is_input_high(), Ordering::Release);
     }
 }
