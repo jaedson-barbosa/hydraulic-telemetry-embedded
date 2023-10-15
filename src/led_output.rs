@@ -22,7 +22,7 @@ pub enum WiFiState {
 }
 
 impl LedOutputController {
-    pub fn new(spawner: Spawner, internal_led_pin: GpioPin<Unknown, 2>, wifi_led_pin: GpioPin<Unknown, 33>, pulse_led_pin: GpioPin<Unknown, 26>) -> Self {
+    pub fn new(spawner: &Spawner, internal_led_pin: GpioPin<Unknown, 2>, wifi_led_pin: GpioPin<Unknown, 33>, pulse_led_pin: GpioPin<Unknown, 26>) -> Self {
         let mut active_pin = internal_led_pin.into_push_pull_output();
         active_pin.set_high().unwrap();
         let wifi_pin = wifi_led_pin.into_push_pull_output();

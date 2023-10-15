@@ -15,6 +15,7 @@ mod i2c_adc;
 mod int_adc;
 mod led_output;
 mod pressure_boost;
+mod pulse_counter;
 mod temperature;
 
 use dotenvy_macro::dotenv;
