@@ -56,7 +56,7 @@ impl ChargerSEPIC {
         Self {
             target_mv: 0,
             pwm_dc: 0,
-            max_dc: 2u32.pow(DUTY as u32) - 1,
+            max_dc: 2u32.pow(DUTY as u32 - 1) - 1, //limit do 50%
             pwm_channel,
         }
     }
