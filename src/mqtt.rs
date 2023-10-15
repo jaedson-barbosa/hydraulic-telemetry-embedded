@@ -2,14 +2,14 @@ use embassy_net::{
     // dns::DnsQueryType,
     tcp::TcpSocket,
     Ipv4Address,
-    Stack
+    Stack,
 };
-use embassy_time::{Timer, Duration, Ticker, Instant};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use esp_println::println;
 use esp_wifi::wifi::WifiDevice;
 use mqttrs::{decode_slice, encode_slice};
 
-use crate::device_state::{DeviceState, receive_state};
+use crate::device_state::{receive_state, DeviceState};
 
 async fn connect_mqtt<'a>(socket: &mut TcpSocket<'a>) {
     let mut buffer = [0u8; 1024];
@@ -57,8 +57,8 @@ pub async fn publish_mqtt_task(stack: &'static Stack<WifiDevice<'static>>) {
         // let address: embassy_net::IpAddress = stack
         //     .dns_query("12345678", DnsQueryType::A)
         //     .await
-        //     .unwrap()[0];
-        let address = Ipv4Address::new(54, 80, 140, 156); // start broker and fix ip
+        //     .unwrap()[0];54, 80, 140, 156
+        let address = Ipv4Address::new(192, 168, 0, 114); // start broker and fix ip
         let mut socket = TcpSocket::new(&stack, &mut rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 

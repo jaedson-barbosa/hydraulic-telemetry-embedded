@@ -20,7 +20,6 @@ mod led_output;
 mod mqtt;
 mod pressure_boost;
 mod pulse_counter;
-mod temperature;
 mod wifi;
 
 use device_state::state_sampling_task;
@@ -33,6 +32,7 @@ use embassy_net::{
     StackResources,
 };
 use esp_backtrace as _;
+use esp_println::println;
 use esp_wifi::{initialize, wifi::WifiMode, EspWifiInitFor};
 use hal::{
     clock::ClockControl,
@@ -51,7 +51,6 @@ use int_adc::IntADC;
 use led_output::{wifi_led_state_task, PulseLed};
 use mqtt::publish_mqtt_task;
 use pressure_boost::PressureController;
-use temperature::Temperature;
 use wifi::{net_task, wifi_controller_task};
 
 const SSID: &str = dotenv!("SSID");
@@ -82,7 +81,7 @@ async fn main(spawner: Spawner) {
     let peripherals = Peripherals::take();
 
     let system = peripherals.DPORT.split();
-    let clocks = &*singleton!(ClockControl::boot_defaults(system.clock_control).freeze());
+    let clocks = &*singleton!(ClockControl::max(system.clock_control).freeze());
     let mut peripheral_clock_control = system.peripheral_clock_control;
 
     let timer =
@@ -126,16 +125,18 @@ async fn main(spawner: Spawner) {
         interrupt::Priority::Priority1,
     )
     .unwrap();
+    println!("Test A");
 
     let i2c = I2C::new(
         peripherals.I2C0,
-        io.pins.gpio6,
-        io.pins.gpio7,
+        io.pins.gpio21,
+        io.pins.gpio22,
         32u32.kHz(),
         &mut peripheral_clock_control,
         &clocks,
     );
     let mut i2c_adc = I2CADC::new(i2c);
+    println!("Test B");
 
     let ledc = &mut *singleton!(LEDC::new(
         peripherals.LEDC,
@@ -158,6 +159,7 @@ async fn main(spawner: Spawner) {
         .ok();
     spawner.spawn(net_task(&stack)).ok();
     spawner.spawn(publish_mqtt_task(&stack)).ok();
+    println!("Test C");
 
     let int_adc = IntADC::new(
         peripherals.SENS.split().adc1,
@@ -167,16 +169,15 @@ async fn main(spawner: Spawner) {
         io.pins.gpio36,
         io.pins.gpio39,
     );
-    let one_wire_pin = io.pins.gpio19.into_open_drain_output();
-    let temperature_sensor = Temperature::new(one_wire_pin, hal::Delay::new(&clocks)).unwrap();
     let pressure_controller = PressureController::new(ledc, io.pins.gpio12, io.pins.gpio13);
     spawner
         .spawn(state_sampling_task(
             int_adc,
             pressure_controller,
-            temperature_sensor,
         ))
         .ok();
+
+    println!("I'm here");
 
     spawner
         .spawn(charger::charger_control_task(ledc, io.pins.gpio23))

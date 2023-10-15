@@ -20,15 +20,22 @@ pub async fn wifi_controller_task(
         ..Default::default()
     });
     controller.set_configuration(&client_config).unwrap();
+    println!("Here");
+
     loop {
         Timer::after(Duration::from_secs(5)).await;
         let wifi_en = DigitalInputState::get_wifi_en();
         let wifi_state = esp_wifi::wifi::get_wifi_state();
-        if !wifi_en && let WifiState::StaConnected = wifi_state {
+        let connected = match wifi_state {
+            WifiState::StaConnected => true,
+            _ => false
+        };
+        println!("Here {wifi_en} {wifi_state:?}");
+        if !wifi_en && connected {
             controller.stop().await.unwrap();
             println!("Wifi stopped!");
             WiFiState::set(WiFiState::Disabled);
-        } else if wifi_en && let WifiState::StaDisconnected = wifi_state {
+        } else if wifi_en && !connected {
             if !matches!(controller.is_started(), Ok(true)) {
                 controller.start().await.unwrap();
                 println!("Wifi started!");

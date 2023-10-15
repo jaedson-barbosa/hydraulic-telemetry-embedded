@@ -4,12 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-esp-hal-common = { version = "0.12.0", features = ["esp32"] }
-hal = { package = "esp32-hal", version = "0.15.0", features = [
-    "async",
-    "embassy-time-timg0",
-    "embassy-executor-thread",
-] }
+esp-hal-common = { version = "0.12.0", features = ["esp32", "embassy-time-timg0"] }
+hal = { package = "esp32-hal", version = "0.15.0", features = ["async", "embassy-time-timg0", "embassy-executor-thread"] }
 esp-backtrace = { version = "0.8.0", features = [
     "esp32",
     "panic-handler",
@@ -39,9 +35,7 @@ embassy-net = { version = "0.1.0", features = [
     "medium-ethernet",
     "dns",
 ] }
-embassy-executor = { version = "0.3.0", package = "embassy-executor", features = [
-    "nightly"
-] }
+embassy-executor   = { version = "0.3.0", features = ["nightly"] }
 embassy-time = { version = "0.1.1", features = ["nightly"] }
 mqttrs = { version = "0.4.1", default-features = false }
 dotenvy_macro = "0.15.7"
@@ -49,6 +43,14 @@ serde = { version = "1.0.188", default-features = false, features = ["derive"] }
 serde-json-core = "0.5.1"
 embassy-sync = "0.3.0"
 ads1x1x = "0.2.2"
-one-wire-bus = { version = "0.1.1" }
-ds18b20 = "0.1.1"
-strum = {version="0.25.0", default-features = false, features = ["derive"]}
+strum = { version = "0.25.0", default-features = false, features = ["derive"] }
+
+[profile.release]
+# Explicitly disable LTO which the Xtensa codegen backend has issues
+lto = "off"
+opt-level = 3
+debug = true
+
+[profile.dev]
+# Explicitly disable LTO which the Xtensa codegen backend has issues
+lto = "off"

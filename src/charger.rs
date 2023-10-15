@@ -42,7 +42,7 @@ pub async fn charger_control_task(ledc: &'static LEDC<'static>, pwm_pin: GpioPin
             clock_source: timer::LSClockSource::APBClk,
             frequency: 100u32.kHz(),
         })
-        .unwrap();
+        .unwrap(); // fix invalid divisor
 
     let pwm_pin = pwm_pin.into_push_pull_output();
     let mut pwm_channel: Channel<'_, LowSpeed, GpioPin<Output<PushPull>, 23>> =

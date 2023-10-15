@@ -1,7 +1,8 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_executor::Spawner;
+use esp_hal_common::gpio::PullDown;
 use hal::{
-    gpio::{GpioPin, Input, PullUp, Unknown},
+    gpio::{GpioPin, Input, Unknown},
     prelude::{_embedded_hal_async_digital_Wait, _esp_hal_gpio_InputPin},
 };
 
@@ -53,21 +54,21 @@ pub fn start_digital_input_monitor_tasks(
     high_freq_en_pin: GpioPin<Unknown, 17>,
 ) {
     spawner
-        .spawn(monitor_wifi_en(wifi_en_pin.into_pull_up_input()))
+        .spawn(monitor_wifi_en(wifi_en_pin.into_pull_down_input()))
         .ok();
     spawner
-        .spawn(monitor_charger_en(charger_en_pin.into_pull_up_input()))
+        .spawn(monitor_charger_en(charger_en_pin.into_pull_down_input()))
         .ok();
     spawner
-        .spawn(monitor_pressure_en(pressure_en_pin.into_pull_up_input()))
+        .spawn(monitor_pressure_en(pressure_en_pin.into_pull_down_input()))
         .ok();
     spawner
-        .spawn(monitor_high_freq_en(high_freq_en_pin.into_pull_up_input()))
+        .spawn(monitor_high_freq_en(high_freq_en_pin.into_pull_down_input()))
         .ok();
 }
 
 #[embassy_executor::task]
-async fn monitor_wifi_en(mut pin: GpioPin<Input<PullUp>, 2>) {
+async fn monitor_wifi_en(mut pin: GpioPin<Input<PullDown>, 2>) {
     loop {
         pin.wait_for_any_edge().await.unwrap();
         WIFI_EN.store(pin.is_input_high(), Ordering::Release);
@@ -75,7 +76,7 @@ async fn monitor_wifi_en(mut pin: GpioPin<Input<PullUp>, 2>) {
 }
 
 #[embassy_executor::task]
-async fn monitor_charger_en(mut pin: GpioPin<Input<PullUp>, 4>) {
+async fn monitor_charger_en(mut pin: GpioPin<Input<PullDown>, 4>) {
     loop {
         pin.wait_for_any_edge().await.unwrap();
         CHARGER_EN.store(pin.is_input_high(), Ordering::Release);
@@ -83,7 +84,7 @@ async fn monitor_charger_en(mut pin: GpioPin<Input<PullUp>, 4>) {
 }
 
 #[embassy_executor::task]
-async fn monitor_pressure_en(mut pin: GpioPin<Input<PullUp>, 16>) {
+async fn monitor_pressure_en(mut pin: GpioPin<Input<PullDown>, 16>) {
     loop {
         pin.wait_for_any_edge().await.unwrap();
         PRESSURE_EN.store(pin.is_input_high(), Ordering::Release);
@@ -91,7 +92,7 @@ async fn monitor_pressure_en(mut pin: GpioPin<Input<PullUp>, 16>) {
 }
 
 #[embassy_executor::task]
-async fn monitor_high_freq_en(mut pin: GpioPin<Input<PullUp>, 17>) {
+async fn monitor_high_freq_en(mut pin: GpioPin<Input<PullDown>, 17>) {
     loop {
         pin.wait_for_any_edge().await.unwrap();
         HIGH_FREQ_EN.store(pin.is_input_high(), Ordering::Release);

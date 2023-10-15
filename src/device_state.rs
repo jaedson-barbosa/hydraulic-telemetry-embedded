@@ -1,12 +1,11 @@
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_time::{Duration, Timer, Instant};
 use esp_println::println;
-use hal::gpio::{GpioPin, OpenDrain, Output};
 
 use crate::{
     charger::ChargerState, digital_input::DigitalInputState, i2c_adc::I2CADCRead,
     int_adc::{IntADC, IntADCState}, led_output::WiFiState, pressure_boost::PressureController,
-    pulse_counter::get_n_pulses, temperature::Temperature,
+    pulse_counter::get_n_pulses
 };
 
 #[derive(serde::Serialize, Clone, Copy, Debug)]
@@ -17,7 +16,6 @@ pub struct DeviceState {
     pub int_adc_state: IntADCState,
     pub wifi_state: WiFiState,
     pub n_pulses: u16,
-    pub temperature: f32,
     pub register_time_ms: u64,
     pub transmission_time_ms: u64
 }
@@ -32,7 +30,6 @@ pub async fn receive_state() -> DeviceState {
 pub async fn state_sampling_task(
     mut int_adc: IntADC,
     mut pressure_controller: PressureController,
-    mut temperature: Temperature<GpioPin<Output<OpenDrain>, 19>>,
 ) {
     loop {
         let charger_state = ChargerState::receive().await;
@@ -41,7 +38,6 @@ pub async fn state_sampling_task(
         let int_adc_state = int_adc.get();
         let wifi_state = WiFiState::get();
         let n_pulses = get_n_pulses();
-        let temperature = temperature.read().unwrap_or_default();
         let register_time_ms = Instant::now().as_millis();
 
         let device_state = DeviceState {
@@ -51,7 +47,6 @@ pub async fn state_sampling_task(
             int_adc_state,
             wifi_state,
             n_pulses,
-            temperature,
             register_time_ms,
             transmission_time_ms: 0
         };
