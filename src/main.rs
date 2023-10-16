@@ -46,7 +46,7 @@ use hal::{
     timer::TimerGroup,
     Rng,
 };
-use i2c_adc::I2CADC;
+use i2c_adc::monitor_i2c_adc_task;
 use int_adc::IntADC;
 use led_output::{wifi_led_state_task, PulseLed};
 use mqtt::publish_mqtt_task;
@@ -55,8 +55,6 @@ use wifi::{net_task, wifi_controller_task};
 
 const SSID: &str = dotenv!("SSID");
 const PASSWORD: &str = dotenv!("PASSWORD");
-
-static mut CORE_STACK: hal::cpu_control::Stack<8192> = hal::cpu_control::Stack::new();
 
 macro_rules! singleton {
     ($val:expr) => {{
@@ -111,21 +109,12 @@ async fn main(spawner: Spawner) {
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
-    digital_input::start_digital_input_monitor_tasks(
-        &spawner,
-        io.pins.gpio2,
-        io.pins.gpio4,
-        io.pins.gpio16,
-        io.pins.gpio17,
-    );
-
     interrupt::enable(peripherals::Interrupt::GPIO, interrupt::Priority::Priority1).unwrap();
     interrupt::enable(
         peripherals::Interrupt::I2C_EXT0,
         interrupt::Priority::Priority1,
     )
     .unwrap();
-    println!("Test A");
 
     let i2c = I2C::new(
         peripherals.I2C0,
@@ -135,8 +124,7 @@ async fn main(spawner: Spawner) {
         &mut peripheral_clock_control,
         &clocks,
     );
-    let mut i2c_adc = I2CADC::new(i2c);
-    println!("Test B");
+    spawner.spawn(monitor_i2c_adc_task(i2c)).ok();
 
     let ledc = &mut *singleton!(LEDC::new(
         peripherals.LEDC,
@@ -177,14 +165,7 @@ async fn main(spawner: Spawner) {
         ))
         .ok();
 
-    println!("I'm here");
-
     spawner
         .spawn(charger::charger_control_task(ledc, io.pins.gpio23))
         .ok();
-
-    let mut cpu_control = hal::cpu_control::CpuControl::new(system.cpu_control);
-    let _guard = cpu_control.start_app_core(unsafe { &mut CORE_STACK }, move || loop {
-        i2c_adc.read_all_inputs();
-    });
 }

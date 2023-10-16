@@ -40,7 +40,7 @@ pub async fn charger_control_task(ledc: &'static LEDC<'static>, pwm_pin: GpioPin
         .configure(timer::config::Config {
             duty: DUTY,
             clock_source: timer::LSClockSource::APBClk,
-            frequency: 100u32.kHz(),
+            frequency: 64u32.kHz(),
         })
         .unwrap(); // fix invalid divisor
 
