@@ -4,7 +4,7 @@ use embassy_net::{
     Ipv4Address,
     Stack,
 };
-use embassy_time::{Duration, Instant, Ticker, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use esp_println::println;
 use esp_wifi::wifi::WifiDevice;
 use mqttrs::{decode_slice, encode_slice};
@@ -58,9 +58,9 @@ pub async fn publish_mqtt_task(stack: &'static Stack<WifiDevice<'static>>) {
         //     .dns_query("12345678", DnsQueryType::A)
         //     .await
         //     .unwrap()[0];54, 80, 140, 156
-        let address = Ipv4Address::new(192, 168, 0, 114); // start broker and fix ip
+        let address = Ipv4Address::new(192, 168, 137, 1); // start broker and fix ip
         let mut socket = TcpSocket::new(&stack, &mut rx_buffer, &mut tx_buffer);
-        socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
+        socket.set_timeout(Some(embassy_time::Duration::from_secs(5)));
 
         let remote_endpoint = (address, 1883);
         while let Err(v) = socket.connect(remote_endpoint).await {
@@ -70,15 +70,14 @@ pub async fn publish_mqtt_task(stack: &'static Stack<WifiDevice<'static>>) {
         println!("Connected to remote socket");
 
         connect_mqtt(&mut socket).await;
+        println!("Connected to MQTT broker");
 
         let mut buffer = [0u8; 1024];
-        let mut ticker = Ticker::every(Duration::from_secs(1));
         loop {
-            ticker.next().await;
             let json = {
                 let mut state = receive_state().await;
                 state.transmission_time_ms = Instant::now().as_millis();
-                serde_json_core::to_string::<DeviceState, 256>(&state).unwrap()
+                serde_json_core::to_string::<DeviceState, 1024>(&state).unwrap()
             };
             let publish = mqttrs::Publish {
                 dup: false,
@@ -91,13 +90,7 @@ pub async fn publish_mqtt_task(stack: &'static Stack<WifiDevice<'static>>) {
             if let Err(v) = socket.write(&buffer[..size]).await {
                 match v {
                     embassy_net::tcp::Error::ConnectionReset => {
-                        break;
-                    }
-                }
-            };
-            if let Err(v) = socket.flush().await {
-                match v {
-                    embassy_net::tcp::Error::ConnectionReset => {
+                        println!("Connection reset while writting to buffer");
                         break;
                     }
                 }

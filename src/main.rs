@@ -32,7 +32,6 @@ use embassy_net::{
     StackResources,
 };
 use esp_backtrace as _;
-use esp_println::println;
 use esp_wifi::{initialize, wifi::WifiMode, EspWifiInitFor};
 use hal::{
     clock::ClockControl,
@@ -109,6 +108,9 @@ async fn main(spawner: Spawner) {
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
+    // set internal LED high to indicate that the ESP is working
+    io.pins.gpio2.into_push_pull_output().set_high().unwrap();
+
     interrupt::enable(peripherals::Interrupt::GPIO, interrupt::Priority::Priority1).unwrap();
     interrupt::enable(
         peripherals::Interrupt::I2C_EXT0,
@@ -147,7 +149,6 @@ async fn main(spawner: Spawner) {
         .ok();
     spawner.spawn(net_task(&stack)).ok();
     spawner.spawn(publish_mqtt_task(&stack)).ok();
-    println!("Test C");
 
     let int_adc = IntADC::new(
         peripherals.SENS.split().adc1,

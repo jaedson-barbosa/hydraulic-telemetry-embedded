@@ -13,13 +13,12 @@ static WIFI_STATE: AtomicU8 = AtomicU8::new(0);
 pub enum WiFiState {
     Disabled,
     Connecting,
-    Connected,
-    Error,
+    Connected
 }
 
 impl WiFiState {
     pub fn get() -> Self {
-        WiFiState::from_repr(WIFI_STATE.load(Ordering::Acquire)).unwrap_or(WiFiState::Error)
+        WiFiState::from_repr(WIFI_STATE.load(Ordering::Acquire)).unwrap_or(WiFiState::Disabled)
     }
 
     pub fn set(val: Self) {
@@ -51,12 +50,7 @@ pub async fn wifi_led_state_task(wifi_led_pin: GpioPin<Unknown, 33>) {
             WiFiState::Disabled => pin.set_low().unwrap(),
             WiFiState::Connecting => pin.toggle().unwrap(),
             WiFiState::Connected => pin.set_high().unwrap(),
-            WiFiState::Error => {
-                pin.toggle().unwrap();
-                Timer::after(Duration::from_millis(2000)).await;
-                continue;
-            }
         };
-        Timer::after(Duration::from_millis(1000)).await;
+        Timer::after(Duration::from_millis(500)).await;
     }
 }

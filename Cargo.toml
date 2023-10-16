@@ -45,6 +45,9 @@ embassy-sync = "0.3.0"
 ads1x1x = "0.2.2"
 strum = { version = "0.25.0", default-features = false, features = ["derive"] }
 
+[profile.dev.package.esp-wifi]
+opt-level = 3
+
 [profile.release]
 # Explicitly disable LTO which the Xtensa codegen backend has issues
 lto = "off"

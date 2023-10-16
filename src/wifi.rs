@@ -20,7 +20,6 @@ pub async fn wifi_controller_task(
         ..Default::default()
     });
     controller.set_configuration(&client_config).unwrap();
-    println!("Here");
 
     loop {
         Timer::after(Duration::from_secs(5)).await;
@@ -30,7 +29,6 @@ pub async fn wifi_controller_task(
             WifiState::StaConnected => true,
             _ => false
         };
-        println!("Here {wifi_en} {wifi_state:?}");
         if !wifi_en && connected {
             controller.stop().await.unwrap();
             println!("Wifi stopped!");
@@ -48,7 +46,6 @@ pub async fn wifi_controller_task(
                 },
                 Err(e) => {
                     println!("Failed to connect to wifi: {e:?}");
-                    WiFiState::set(WiFiState::Error);
                     Timer::after(Duration::from_secs(5)).await
                 }
             }

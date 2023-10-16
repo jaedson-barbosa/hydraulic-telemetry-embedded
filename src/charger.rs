@@ -13,11 +13,11 @@ use hal::{
     },
 };
 
-use crate::{i2c_adc::I2CADCRead, digital_input::DigitalInputState};
+use crate::i2c_adc::I2CADCRead;
 
 const DUTY: Duty = Duty::Duty10Bit;
 const TARGET_MV: u16 = 4100;
-const TARGET_MA: u16 = 50;
+const TARGET_MA: i16 = 50;
 
 #[derive(serde::Serialize, Clone, Copy, Debug)]
 pub struct ChargerState {
@@ -57,16 +57,13 @@ pub async fn charger_control_task(ledc: &'static LEDC<'static>, pwm_pin: GpioPin
 
     let mut state = ChargerState {
         pwm_dc: 0,
-        max_dc: 2u32.pow(DUTY as u32 - 1) - 1, //limit do 50%
+        max_dc: 2u32.pow(DUTY as u32 - 1), //limit do 50%
     };
 
     loop {
-        let charger_en = DigitalInputState::get_charger_en();
         let battery_mv = I2CADCRead::get_battery_mv();
         let battery_ma = I2CADCRead::get_battery_ma();
-        if !charger_en {
-            state.pwm_dc = 0;
-        } else if battery_mv > TARGET_MV && state.pwm_dc > 0 {
+        if battery_mv > TARGET_MV && state.pwm_dc > 0 {
             state.pwm_dc -= 1;
         } else if battery_ma < TARGET_MA && state.pwm_dc < state.max_dc {
             state.pwm_dc += 1;

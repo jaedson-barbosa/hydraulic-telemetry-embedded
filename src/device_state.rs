@@ -1,6 +1,5 @@
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_time::{Duration, Timer, Instant};
-use esp_println::println;
 
 use crate::{
     charger::ChargerState, digital_input::DigitalInputState, i2c_adc::I2CADCRead,
@@ -50,23 +49,17 @@ pub async fn state_sampling_task(
             register_time_ms,
             transmission_time_ms: 0
         };
-        println!("Device state: {device_state:?}");
         STATE_CHANNEL.send(device_state).await; // stop after channel is full
 
         let mut interval = if digital_state.high_freq_en { 1 } else { 10 };
         if !digital_state.wifi_en {
             interval *= 60; // convert from secs to minutes if WiFi is disabled
         }
-        if digital_state.pressure_en {
-            if interval > 1 {
-                pressure_controller.set_enable(false);
-                Timer::after(Duration::from_secs(interval - 1)).await;
-                pressure_controller.set_enable(true);
-            }
-            Timer::after(Duration::from_secs(1)).await;
-        } else {
+        if interval > 1 {
             pressure_controller.set_enable(false);
-            Timer::after(Duration::from_secs(interval)).await;
+            Timer::after(Duration::from_secs(interval - 1)).await;
+            pressure_controller.set_enable(true);
         }
+        Timer::after(Duration::from_secs(1)).await;
     }
 }
