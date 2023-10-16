@@ -57,7 +57,7 @@ pub async fn charger_control_task(ledc: &'static LEDC<'static>, pwm_pin: GpioPin
 
     let mut state = ChargerState {
         pwm_dc: 0,
-        max_dc: 2u32.pow(DUTY as u32 - 1), //limit do 50%
+        max_dc: 2u32.pow(DUTY as u32) - 1, //limit do 50%
     };
 
     loop {
@@ -73,6 +73,6 @@ pub async fn charger_control_task(ledc: &'static LEDC<'static>, pwm_pin: GpioPin
         pwm_channel.set_duty_hw(state.pwm_dc);
         CHARGER_STATE.signal(state);
 
-        embassy_time::Timer::after(Duration::from_millis(100)).await;
+        embassy_time::Timer::after(Duration::from_millis(10)).await;
     }
 }
