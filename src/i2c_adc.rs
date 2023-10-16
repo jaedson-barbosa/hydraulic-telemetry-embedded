@@ -8,7 +8,7 @@ use hal::{peripherals::I2C0, i2c::I2C};
 static BATTERY_MA: AtomicI16 = AtomicI16::new(0);
 static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
 static ESP_VIN_MV: AtomicU16 = AtomicU16::new(0);
-static BUCK_OUT_MV: AtomicU16 = AtomicU16::new(0);
+static GENERATOR_MV: AtomicU16 = AtomicU16::new(0);
 static PRESSURE_MV: AtomicU16 = AtomicU16::new(0);
 
 #[derive(serde::Serialize, Clone, Copy, Debug)]
@@ -16,7 +16,7 @@ pub struct I2CADCRead {
     battery_ma: i16,
     battery_mv: u16,
     esp_vin_mv: u16,
-    buck_out_mv: u16,
+    generator_mv: u16,
     pressure_mv: u16
 }
 
@@ -26,7 +26,7 @@ impl I2CADCRead {
             battery_ma: Self::get_battery_ma(),
             battery_mv: Self::get_battery_mv(),
             esp_vin_mv: Self::get_esp_vin_mv(),
-            buck_out_mv: Self::get_buck_out_mv(),
+            generator_mv: Self::get_generator_mv(),
             pressure_mv: Self::get_pressure_mv()
         }
     }
@@ -43,8 +43,8 @@ impl I2CADCRead {
         ESP_VIN_MV.load(Ordering::Acquire)
     }
 
-    pub fn get_buck_out_mv() -> u16 {
-        BUCK_OUT_MV.load(Ordering::Acquire)
+    pub fn get_generator_mv() -> u16 {
+        GENERATOR_MV.load(Ordering::Acquire)
     }
 
     pub fn get_pressure_mv() -> u16 {
@@ -66,7 +66,7 @@ pub async fn monitor_i2c_adc_task(i2c: I2C<'static, I2C0>) {
         let a1 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA1)).unwrap();
         BATTERY_MV.store(get_mv(a1), Ordering::Release);
         let a2 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA2)).unwrap();
-        BUCK_OUT_MV.store(get_mv(a2), Ordering::Release);
+        GENERATOR_MV.store(get_mv(a2) * 11, Ordering::Release);
         let a3 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA3)).unwrap();
         PRESSURE_MV.store(get_mv(a3), Ordering::Release);
 
