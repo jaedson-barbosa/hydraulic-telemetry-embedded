@@ -32,7 +32,7 @@ impl PressureController {
         channel0
             .configure(channel::config::Config {
                 timer: &lstimer0,
-                duty_pct: 30,
+                duty_pct: 75,
                 pin_config: channel::config::PinConfig::PushPull,
             })
             .unwrap();
