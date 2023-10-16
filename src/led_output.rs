@@ -43,7 +43,7 @@ impl PulseLed {
 }
 
 #[embassy_executor::task]
-pub async fn wifi_led_state_task(wifi_led_pin: GpioPin<Unknown, 33>) {
+pub async fn wifi_led_state_task(wifi_led_pin: GpioPin<Unknown, 25>) {
     let mut pin = wifi_led_pin.into_push_pull_output();
     loop {
         match WiFiState::get() {

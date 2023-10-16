@@ -15,7 +15,6 @@ mod charger;
 mod device_state;
 mod digital_input;
 mod i2c_adc;
-mod int_adc;
 mod led_output;
 mod mqtt;
 mod pressure_boost;
@@ -46,7 +45,6 @@ use hal::{
     Rng,
 };
 use i2c_adc::monitor_i2c_adc_task;
-use int_adc::IntADC;
 use led_output::{wifi_led_state_task, PulseLed};
 use mqtt::publish_mqtt_task;
 use pressure_boost::PressureController;
@@ -136,7 +134,7 @@ async fn main(spawner: Spawner) {
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
     let pulse_led = PulseLed::init(io.pins.gpio26);
-    spawner.spawn(wifi_led_state_task(io.pins.gpio33)).ok();
+    spawner.spawn(wifi_led_state_task(io.pins.gpio25)).ok();
     spawner
         .spawn(pulse_counter::pulse_counter(io.pins.gpio15, pulse_led))
         .ok();
@@ -150,21 +148,8 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net_task(&stack)).ok();
     spawner.spawn(publish_mqtt_task(&stack)).ok();
 
-    let int_adc = IntADC::new(
-        peripherals.SENS.split().adc1,
-        io.pins.gpio32,
-        io.pins.gpio34,
-        io.pins.gpio35,
-        io.pins.gpio36,
-        io.pins.gpio39,
-    );
     let pressure_controller = PressureController::new(ledc, io.pins.gpio12, io.pins.gpio13);
-    spawner
-        .spawn(state_sampling_task(
-            int_adc,
-            pressure_controller,
-        ))
-        .ok();
+    spawner.spawn(state_sampling_task(pressure_controller)).ok();
 
     spawner
         .spawn(charger::charger_control_task(ledc, io.pins.gpio23))
