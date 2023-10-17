@@ -12,24 +12,15 @@
 // board repo in https://github.com/Xinyuan-LilyGO/LilyGo-T-OI-PLUS
 
 mod charger;
-mod device_state;
-mod digital_input;
 mod i2c_adc;
-mod led_output;
-mod mqtt;
+mod state_publish;
 mod pressure_boost;
 mod pulse_counter;
 mod wifi;
 
-use device_state::state_sampling_task;
 use dotenvy_macro::dotenv;
-use embassy_executor::{Spawner, _export::StaticCell};
-use embassy_net::{
-    // dns::DnsQueryType,
-    Config,
-    Stack,
-    StackResources,
-};
+use embassy_executor::_export::StaticCell;
+use embassy_net::{Config, Stack, StackResources};
 use esp_backtrace as _;
 use esp_wifi::{initialize, wifi::WifiMode, EspWifiInitFor};
 use hal::{
@@ -38,19 +29,15 @@ use hal::{
     gpio::IO,
     i2c::I2C,
     interrupt,
-    ledc::{LSGlobalClkSource, LEDC},
+    ledc::{LEDC, LSGlobalClkSource},
     peripherals::{self, Peripherals},
     prelude::*,
     timer::TimerGroup,
     Rng,
 };
-use i2c_adc::monitor_i2c_adc_task;
-use led_output::{wifi_led_state_task, PulseLed};
-use mqtt::publish_mqtt_task;
 use pressure_boost::PressureController;
-use wifi::{net_task, wifi_controller_task};
 
-const SSID: &str = dotenv!("SSID");
+const SSID: &str = dotenv!("SSIDD");
 const PASSWORD: &str = dotenv!("PASSWORD");
 
 macro_rules! singleton {
@@ -64,15 +51,6 @@ macro_rules! singleton {
 
 #[entry]
 fn entry() -> ! {
-    static EXECUTOR: StaticCell<embassy::executor::Executor> = StaticCell::new();
-    let executor = EXECUTOR.init(embassy::executor::Executor::new());
-    executor.run(|spawner| {
-        spawner.spawn(main(spawner)).ok();
-    });
-}
-
-#[embassy_executor::task]
-async fn main(spawner: Spawner) {
     let peripherals = Peripherals::take();
 
     let system = peripherals.DPORT.split();
@@ -106,9 +84,6 @@ async fn main(spawner: Spawner) {
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
-    // set internal LED high to indicate that the ESP is working
-    io.pins.gpio2.into_push_pull_output().set_high().unwrap();
-
     interrupt::enable(peripherals::Interrupt::GPIO, interrupt::Priority::Priority1).unwrap();
     interrupt::enable(
         peripherals::Interrupt::I2C_EXT0,
@@ -124,7 +99,6 @@ async fn main(spawner: Spawner) {
         &mut peripheral_clock_control,
         &clocks,
     );
-    spawner.spawn(monitor_i2c_adc_task(i2c)).ok();
 
     let ledc = &mut *singleton!(LEDC::new(
         peripherals.LEDC,
@@ -133,25 +107,32 @@ async fn main(spawner: Spawner) {
     ));
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
-    let pulse_led = PulseLed::init(io.pins.gpio26);
-    spawner.spawn(wifi_led_state_task(io.pins.gpio25)).ok();
-    spawner
-        .spawn(pulse_counter::pulse_counter(io.pins.gpio15, pulse_led))
-        .ok();
-    spawner
-        .spawn(wifi_controller_task(
-            controller,
-            SSID.into(),
-            PASSWORD.into(),
-        ))
-        .ok();
-    spawner.spawn(net_task(&stack)).ok();
-    spawner.spawn(publish_mqtt_task(&stack)).ok();
-
     let pressure_controller = PressureController::new(ledc, io.pins.gpio12, io.pins.gpio13);
-    spawner.spawn(state_sampling_task(pressure_controller)).ok();
 
-    spawner
-        .spawn(charger::charger_control_task(ledc, io.pins.gpio23))
-        .ok();
+    static EXECUTOR: StaticCell<embassy::executor::Executor> = StaticCell::new();
+    let executor = EXECUTOR.init(embassy::executor::Executor::new());
+    executor.run(|spawner| {
+        spawner.spawn(i2c_adc::monitor_i2c_adc_task(i2c)).ok();
+        spawner
+            .spawn(pulse_counter::pulse_counter(io.pins.gpio15))
+            .ok();
+        spawner
+            .spawn(wifi::wifi_controller_task(
+                controller,
+                SSID.into(),
+                PASSWORD.into(),
+            ))
+            .ok();
+        spawner.spawn(wifi::net_task(&stack)).ok();
+        spawner
+            .spawn(state_publish::publish_mqtt_task(&stack, io.pins.gpio2, pressure_controller))
+            .ok();
+        spawner
+            .spawn(charger::charger_control_task(
+                ledc,
+                io.pins.gpio23,
+                io.pins.gpio19,
+            ))
+            .ok();
+    });
 }

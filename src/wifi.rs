@@ -1,9 +1,8 @@
-use crate::{digital_input::DigitalInputState, led_output::WiFiState};
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
 use embedded_svc::wifi::{AuthMethod, ClientConfiguration, Configuration, Wifi};
 use esp_println::println;
-use esp_wifi::wifi::{WifiController, WifiDevice, WifiState};
+use esp_wifi::wifi::{WifiController, WifiDevice, WifiState, WifiEvent};
 
 #[embassy_executor::task]
 pub async fn wifi_controller_task(
@@ -11,7 +10,6 @@ pub async fn wifi_controller_task(
     ssid: &'static str,
     password: &'static str,
 ) {
-    WiFiState::set(WiFiState::Disabled);
     println!("{ssid} e {password}");
     let client_config = Configuration::Client(ClientConfiguration {
         ssid: ssid.into(),
@@ -20,34 +18,24 @@ pub async fn wifi_controller_task(
         ..Default::default()
     });
     controller.set_configuration(&client_config).unwrap();
-
+    println!("Starting wifi");
+    controller.start().await.unwrap();
+    println!("Wifi started!");
     loop {
-        Timer::after(Duration::from_secs(5)).await;
-        let wifi_en = DigitalInputState::get_wifi_en();
-        let wifi_state = esp_wifi::wifi::get_wifi_state();
-        let connected = match wifi_state {
-            WifiState::StaConnected => true,
-            _ => false
-        };
-        if !wifi_en && connected {
-            controller.stop().await.unwrap();
-            println!("Wifi stopped!");
-            WiFiState::set(WiFiState::Disabled);
-        } else if wifi_en && !connected {
-            if !matches!(controller.is_started(), Ok(true)) {
-                controller.start().await.unwrap();
-                println!("Wifi started!");
+        match esp_wifi::wifi::get_wifi_state() {
+            WifiState::StaConnected => {
+                // wait until we're no longer connected
+                controller.wait_for_event(WifiEvent::StaDisconnected).await;
+                Timer::after(Duration::from_secs(5)).await
             }
-            WiFiState::set(WiFiState::Connecting);
-            match controller.connect().await {
-                Ok(_) => {
-                    WiFiState::set(WiFiState::Connected);
-                    println!("Wifi connected!")
-                },
-                Err(e) => {
-                    println!("Failed to connect to wifi: {e:?}");
-                    Timer::after(Duration::from_secs(5)).await
-                }
+            _ => {}
+        }
+        println!("About to connect...");
+        match controller.connect().await {
+            Ok(_) => println!("Wifi connected!"),
+            Err(e) => {
+                println!("Failed to connect to wifi: {e:?}");
+                Timer::after(Duration::from_secs(5)).await
             }
         }
     }

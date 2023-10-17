@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-esp-hal-common = { version = "0.12.0", features = ["esp32", "embassy-time-timg0"] }
+# esp-hal-common = { version = "0.12.0", features = ["esp32", "embassy-time-timg0"] }
 hal = { package = "esp32-hal", version = "0.15.0", features = ["async", "embassy-time-timg0", "embassy-executor-thread"] }
 esp-backtrace = { version = "0.8.0", features = [
     "esp32",
@@ -33,7 +33,6 @@ embassy-net = { version = "0.1.0", features = [
     "udp",
     "dhcpv4",
     "medium-ethernet",
-    "dns",
 ] }
 embassy-executor   = { version = "0.3.0", features = ["nightly"] }
 embassy-time = { version = "0.1.1", features = ["nightly"] }

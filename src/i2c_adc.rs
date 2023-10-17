@@ -3,12 +3,12 @@ use core::sync::atomic::{AtomicU16, Ordering, AtomicI16};
 use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
 use embassy_time::Duration;
 use embedded_hal::adc::OneShot;
+use esp_println::println;
 use hal::{peripherals::I2C0, i2c::I2C};
 
 static BATTERY_MA: AtomicI16 = AtomicI16::new(0);
 static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
 static ESP_VIN_MV: AtomicU16 = AtomicU16::new(0);
-static GENERATOR_MV: AtomicU16 = AtomicU16::new(0);
 static PRESSURE_MV: AtomicU16 = AtomicU16::new(0);
 
 #[derive(serde::Serialize, Clone, Copy, Debug)]
@@ -16,7 +16,6 @@ pub struct I2CADCRead {
     battery_ma: i16,
     battery_mv: u16,
     esp_vin_mv: u16,
-    generator_mv: u16,
     pressure_mv: u16
 }
 
@@ -26,7 +25,6 @@ impl I2CADCRead {
             battery_ma: Self::get_battery_ma(),
             battery_mv: Self::get_battery_mv(),
             esp_vin_mv: Self::get_esp_vin_mv(),
-            generator_mv: Self::get_generator_mv(),
             pressure_mv: Self::get_pressure_mv()
         }
     }
@@ -41,10 +39,6 @@ impl I2CADCRead {
 
     pub fn get_esp_vin_mv() -> u16 {
         ESP_VIN_MV.load(Ordering::Acquire)
-    }
-
-    pub fn get_generator_mv() -> u16 {
-        GENERATOR_MV.load(Ordering::Acquire)
     }
 
     pub fn get_pressure_mv() -> u16 {
@@ -65,11 +59,9 @@ pub async fn monitor_i2c_adc_task(i2c: I2C<'static, I2C0>) {
         ESP_VIN_MV.store(get_mv(a0), Ordering::Release);
         let a1 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA1)).unwrap();
         BATTERY_MV.store(get_mv(a1), Ordering::Release);
-        let a2 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA2)).unwrap();
-        GENERATOR_MV.store(get_mv(a2) * 11, Ordering::Release);
         let a3 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA3)).unwrap();
         PRESSURE_MV.store(get_mv(a3), Ordering::Release);
-
+        println!("Updated i2c adc values");
         embassy_time::Timer::after(Duration::from_millis(100)).await;
     }
 }
