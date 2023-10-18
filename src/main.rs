@@ -11,9 +11,9 @@
 // wifi code examples in https://github.com/esp-rs/esp-wifi/blob/main/examples-esp32c3
 // board repo in https://github.com/Xinyuan-LilyGO/LilyGo-T-OI-PLUS
 
-mod charger;
+mod device_state;
 mod i2c_adc;
-mod state_publish;
+mod mqtt_publish;
 mod pressure_boost;
 mod pulse_counter;
 mod wifi;
@@ -29,7 +29,7 @@ use hal::{
     gpio::IO,
     i2c::I2C,
     interrupt,
-    ledc::{LEDC, LSGlobalClkSource},
+    ledc::{LSGlobalClkSource, LEDC},
     peripherals::{self, Peripherals},
     prelude::*,
     timer::TimerGroup,
@@ -37,7 +37,9 @@ use hal::{
 };
 use pressure_boost::PressureController;
 
-const SSID: &str = dotenv!("SSIDD");
+use crate::i2c_adc::I2CADCReader;
+
+const SSID: &str = dotenv!("SSID");
 const PASSWORD: &str = dotenv!("PASSWORD");
 
 macro_rules! singleton {
@@ -93,9 +95,9 @@ fn entry() -> ! {
 
     let i2c = I2C::new(
         peripherals.I2C0,
-        io.pins.gpio21,
-        io.pins.gpio22,
-        32u32.kHz(),
+        io.pins.gpio15,
+        io.pins.gpio4,
+        100u32.kHz(),
         &mut peripheral_clock_control,
         &clocks,
     );
@@ -107,14 +109,14 @@ fn entry() -> ! {
     ));
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
-    let pressure_controller = PressureController::new(ledc, io.pins.gpio12, io.pins.gpio13);
+    let pressure_controller = PressureController::new(ledc, io.pins.gpio23, io.pins.gpio22);
+    let i2c_adc = I2CADCReader::new(i2c);
 
     static EXECUTOR: StaticCell<embassy::executor::Executor> = StaticCell::new();
     let executor = EXECUTOR.init(embassy::executor::Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(i2c_adc::monitor_i2c_adc_task(i2c)).ok();
         spawner
-            .spawn(pulse_counter::pulse_counter(io.pins.gpio15))
+            .spawn(pulse_counter::pulse_counter(io.pins.gpio12))
             .ok();
         spawner
             .spawn(wifi::wifi_controller_task(
@@ -125,14 +127,13 @@ fn entry() -> ! {
             .ok();
         spawner.spawn(wifi::net_task(&stack)).ok();
         spawner
-            .spawn(state_publish::publish_mqtt_task(&stack, io.pins.gpio2, pressure_controller))
+            .spawn(device_state::device_state_monitor_task(
+                pressure_controller,
+                i2c_adc,
+            ))
             .ok();
         spawner
-            .spawn(charger::charger_control_task(
-                ledc,
-                io.pins.gpio23,
-                io.pins.gpio19,
-            ))
+            .spawn(mqtt_publish::publish_mqtt_task(&stack, io.pins.gpio2))
             .ok();
     });
 }

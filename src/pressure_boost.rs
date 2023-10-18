@@ -8,14 +8,14 @@ use hal::{
 };
 
 pub struct PressureController {
-    enable_pin: GpioPin<Output<PushPull>, 13>,
+    enable_pin: GpioPin<Output<PushPull>, 22>,
 }
 
 impl PressureController {
     pub fn new(
         ledc: &'static LEDC<'static>,
-        pwm_pin: GpioPin<Unknown, 12>,
-        enable_pin: GpioPin<Unknown, 13>,
+        pwm_pin: GpioPin<Unknown, 23>,
+        enable_pin: GpioPin<Unknown, 22>,
     ) -> Self {
         let pwm_pin = pwm_pin.into_push_pull_output();
 
@@ -32,7 +32,7 @@ impl PressureController {
         channel0
             .configure(channel::config::Config {
                 timer: &lstimer0,
-                duty_pct: 75,
+                duty_pct: 40,
                 pin_config: channel::config::PinConfig::PushPull,
             })
             .unwrap();
@@ -43,8 +43,8 @@ impl PressureController {
 
     pub fn set_enable(&mut self, value: bool) {
         match value {
-            true => self.enable_pin.set_low().unwrap(),
-            false => self.enable_pin.set_high().unwrap(),
+            true => self.enable_pin.set_high().unwrap(),
+            false => self.enable_pin.set_low().unwrap(),
         }
     }
 }

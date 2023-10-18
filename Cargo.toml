@@ -21,6 +21,8 @@ esp-wifi = { git = "https://github.com/esp-rs/esp-wifi.git", features = [
     "embassy-net",
     "wifi-logs",
     "dump-packets",
+    "ps-min-modem",
+    "ps-max-modem"
 ] }
 embedded-hal = "0.2.7"
 embedded-svc = { version = "0.25.3", default-features = false }
