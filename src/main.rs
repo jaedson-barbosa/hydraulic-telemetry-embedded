@@ -11,6 +11,7 @@
 // wifi code examples in https://github.com/esp-rs/esp-wifi/blob/main/examples-esp32c3
 // board repo in https://github.com/Xinyuan-LilyGO/LilyGo-T-OI-PLUS
 
+mod charger;
 mod device_state;
 mod i2c_adc;
 mod mqtt_publish;
@@ -117,6 +118,11 @@ fn entry() -> ! {
     executor.run(|spawner| {
         spawner
             .spawn(pulse_counter::pulse_counter(io.pins.gpio12))
+            .ok();
+        spawner
+            .spawn(charger::charger_task(
+                io.pins.gpio13.into_push_pull_output(),
+            ))
             .ok();
         spawner
             .spawn(wifi::wifi_controller_task(

@@ -46,9 +46,9 @@ impl I2CADCReader {
 
 #[derive(serde::Serialize, Clone, Copy, Debug, Default)]
 pub struct I2CADCRead {
-    battery_ma: i16,
-    battery_mv: u16,
-    ldo_inp_mv: u16,
-    esp_vin_mv: u16,
-    pressure_mv: u16,
+    pub battery_ma: i16,
+    pub battery_mv: u16,
+    pub ldo_inp_mv: u16,
+    pub esp_vin_mv: u16,
+    pub pressure_mv: u16,
 }
