@@ -35,7 +35,7 @@ impl I2CADCReader {
         let a2 = nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA2)).unwrap();
         let a3 = nb::block!(self.adc.read(&mut ads1x1x::channel::SingleA3)).unwrap();
         I2CADCRead {
-            battery_ma: dif_a1_a3 / 16,
+            battery_ma: dif_a1_a3 / 8,
             battery_mv: Self::get_mv(a1),
             ldo_inp_mv: Self::get_mv(a3),
             esp_vin_mv: Self::get_mv(a2),

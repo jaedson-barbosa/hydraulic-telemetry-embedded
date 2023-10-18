@@ -96,8 +96,8 @@ fn entry() -> ! {
 
     let i2c = I2C::new(
         peripherals.I2C0,
-        io.pins.gpio15,
         io.pins.gpio4,
+        io.pins.gpio16,
         100u32.kHz(),
         &mut peripheral_clock_control,
         &clocks,
@@ -117,11 +117,11 @@ fn entry() -> ! {
     let executor = EXECUTOR.init(embassy::executor::Executor::new());
     executor.run(|spawner| {
         spawner
-            .spawn(pulse_counter::pulse_counter(io.pins.gpio12))
+            .spawn(pulse_counter::pulse_counter(io.pins.gpio21))
             .ok();
         spawner
             .spawn(charger::charger_task(
-                io.pins.gpio13.into_push_pull_output(),
+                io.pins.gpio15.into_push_pull_output(),
             ))
             .ok();
         spawner

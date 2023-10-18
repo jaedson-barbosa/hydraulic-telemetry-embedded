@@ -8,7 +8,7 @@ pub fn get_n_pulses() -> u16 {
 }
 
 #[embassy_executor::task]
-pub async fn pulse_counter(pulse_pin: GpioPin<Unknown, 12>) {
+pub async fn pulse_counter(pulse_pin: GpioPin<Unknown, 21>) {
     let mut pin = pulse_pin.into_pull_down_input();
     loop {
         pin.wait_for_rising_edge().await.unwrap();
