@@ -6,9 +6,9 @@ use crate::i2c_adc::{I2CADCRead, I2CADCReader};
 use crate::pressure_boost::PressureController;
 use crate::pulse_counter::get_n_pulses;
 
-const INTERVAL_MS: u64 = 1000;
+const INTERVAL_MS: u64 = 100;
 const BATCH_SIZE: usize = 10;
-const N_EN_PRESSURE: usize = 3;
+const N_EN_PRESSURE: usize = 5;
 
 pub static BATTERY_MV: Signal<CriticalSectionRawMutex, u16> = Signal::new();
 
