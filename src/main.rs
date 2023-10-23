@@ -29,7 +29,7 @@ use esp_wifi::{
 };
 use hal::{
     clock::{ClockControl, Clocks},
-    gpio::{GpioPin, Output, PushPull, Unknown, IO, RTCPin},
+    gpio::{GpioPin, Output, PushPull, RTCPin, Unknown, IO},
     interrupt,
     ledc::{LSGlobalClkSource, LowSpeed, LEDC},
     macros::ram,
@@ -70,6 +70,7 @@ pub struct DeviceState {
 pub struct PersistentState {
     pub n_pulses: u16,
     pub next_transmission: u64,
+    pub charger_state: bool,
 }
 
 impl PersistentState {
@@ -94,7 +95,7 @@ impl PersistentState {
         counter
     }
 
-    pub fn next(&self, new_pulses: Option<u16>) -> Self {
+    pub fn next(&self, new_pulses: Option<u16>, new_charger_state: Option<bool>) -> Self {
         let mut flash = FlashStorage::new();
         let state = PersistentState {
             n_pulses: match new_pulses {
@@ -102,6 +103,7 @@ impl PersistentState {
                 None => self.n_pulses,
             },
             next_transmission: self.next_transmission + INTERVAL_SEC,
+            charger_state: new_charger_state.unwrap_or(self.charger_state),
         };
         let bytes = state.serialize();
         flash.write(FLASH_ADDR, &bytes).unwrap();
@@ -234,22 +236,19 @@ fn entry() -> ! {
 
     let adc_state = read_i2c_adc(i2c);
     pressure_en_pin.set_low().unwrap();
-    control_charger(io.pins.gpio15.into_push_pull_output(), adc_state.battery_mv);
-
-    let initial_pulses = persistent_state.n_pulses;
-    let sent_n_pulses = connect_to_broker_and_publish_device(
-        adc_state,
-        initial_pulses,
-        &mut socket,
-        &rtc,
+    let new_charger_state = control_charger(
+        io.pins.gpio15.into_push_pull_output(),
+        adc_state.battery_mv,
+        persistent_state.charger_state,
     );
 
-    socket.work();
-    socket.disconnect();
+    let initial_pulses = persistent_state.n_pulses;
+    let sent_n_pulses =
+        connect_to_broker_and_publish_device(adc_state, initial_pulses, &mut socket, &rtc);
 
     let aditional_pulses = ADITIONAL_PULSES.load(Ordering::Acquire);
     let remaining_n_pulses = initial_pulses + aditional_pulses - sent_n_pulses;
-    let next = persistent_state.next(Some(remaining_n_pulses));
+    let next = persistent_state.next(Some(remaining_n_pulses), Some(new_charger_state));
     active_state_led.set_low().unwrap();
     go_sleep(&clocks, next.next_transmission, wake_pin, rtc);
 }
@@ -299,15 +298,26 @@ fn go_sleep(
     let ext0 = Ext0WakeupSource::new(&mut ext0_pin, WakeupLevel::Low);
     rtc.sleep_deep(&[&timer, &ext0], &mut delay);
 }
-
-pub fn control_charger(mut charger_en_pin: GpioPin<Output<PushPull>, 15>, battery_mv: u16) {
-    let enabled = charger_en_pin.is_set_high().unwrap();
-    if battery_mv > 4250 {
+pub fn control_charger(
+    mut charger_en_pin: GpioPin<Output<PushPull>, 15>,
+    battery_mv: u16,
+    current_state: bool,
+) -> bool {
+    if battery_mv > 4200 {
+        charger_en_pin.rtcio_pad_hold(false);
         charger_en_pin.set_low().unwrap();
-    } else if battery_mv < 4150 && !enabled {
+        charger_en_pin.rtcio_pad_hold(true);
+        println!("disabling charger");
+        false
+    } else if battery_mv < 4150 && !current_state {
+        charger_en_pin.rtcio_pad_hold(false);
         charger_en_pin.set_high().unwrap();
+        charger_en_pin.rtcio_pad_hold(true);
+        println!("enabling charger");
+        true
+    } else {
+        current_state
     }
-    charger_en_pin.rtcio_pad_hold(true);
 }
 
 pub fn start_boost_pwm<'a>(ledc: &'a LEDC<'a>, pwm_pin: GpioPin<Unknown, 23>) {
