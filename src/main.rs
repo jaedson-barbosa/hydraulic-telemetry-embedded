@@ -29,7 +29,7 @@ use esp_wifi::{
 };
 use hal::{
     clock::{ClockControl, Clocks},
-    gpio::{GpioPin, Output, PushPull, RTCPin, Unknown, IO},
+    gpio::{GpioPin, Output, PushPull, RTCPin, Unknown, IO, Input, PullUp},
     interrupt,
     ledc::{LSGlobalClkSource, LowSpeed, LEDC},
     macros::ram,
@@ -102,7 +102,7 @@ impl PersistentState {
         rtc: &Rtc<'static>,
     ) -> Self {
         let mut flash = FlashStorage::new();
-        let time = rtc.get_time_ms() / 1000;
+        let time = rtc.get_time_ms() / 1000 + INTERVAL_SEC / 2; // min interval of at least 50%
         let next_transmission = time + INTERVAL_SEC - time % INTERVAL_SEC;
         println!("{time}, {next_transmission}, {INTERVAL_SEC}");
         let state = PersistentState {
@@ -141,24 +141,23 @@ fn entry() -> ! {
     let mut peripheral_clock_control = system.peripheral_clock_control;
 
     let rtc = Rtc::new(peripherals.RTC_CNTL);
-    let wake_pin = io.pins.gpio33;
+    let mut pulse_pin = io.pins.gpio12.into_pull_up_input();
     {
         let time = rtc.get_time_ms() / 1000;
         if time < persistent_state.next_transmission {
             // reenter in sleep mode if we still need to wait
-            go_sleep(&clocks, persistent_state.next_transmission, wake_pin, rtc);
+            go_sleep(&clocks, persistent_state.next_transmission, pulse_pin, rtc);
         }
     }
 
     // time to send data
 
-    let mut pulse_pin = io.pins.gpio12.into_pull_up_input();
     pulse_pin.listen(hal::gpio::Event::FallingEdge);
     interrupt::enable(peripherals::Interrupt::GPIO, interrupt::Priority::Priority1).unwrap();
 
     let timer_group0 = TimerGroup::new(peripherals.TIMG0, &clocks, &mut peripheral_clock_control);
     let mut wdt = timer_group0.wdt;
-    wdt.start(20u64.secs()); // prevent unknown stop
+    wdt.start(30u64.secs()); // prevent unknown stop
 
     interrupt::enable(
         peripherals::Interrupt::I2C_EXT0,
@@ -263,7 +262,7 @@ fn entry() -> ! {
     let aditional_pulses = ADITIONAL_PULSES.load(Ordering::Acquire);
     let remaining_n_pulses = initial_pulses + aditional_pulses - sent_n_pulses;
     let next = persistent_state.next(Some(remaining_n_pulses), Some(new_charger_state), &rtc);
-    go_sleep(&clocks, next.next_transmission, wake_pin, rtc);
+    go_sleep(&clocks, next.next_transmission, pulse_pin, rtc);
 }
 
 fn connect_to_broker_and_publish_device<'a, 'b>(
@@ -300,7 +299,7 @@ unsafe fn GPIO() {
 fn go_sleep(
     clocks: &Clocks<'static>,
     next_transmission: u64,
-    wake_pin: GpioPin<Unknown, 33>,
+    wake_pin: GpioPin<Input<PullUp>, 12>,
     mut rtc: Rtc,
 ) -> ! {
     let time = rtc.get_time_ms() / 1000;
