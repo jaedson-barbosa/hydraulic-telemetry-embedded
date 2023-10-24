@@ -29,7 +29,7 @@ use esp_wifi::{
 };
 use hal::{
     clock::{ClockControl, Clocks},
-    gpio::{GpioPin, Output, PushPull, RTCPin, Unknown, IO, Input, PullUp},
+    gpio::{GpioPin, Input, Output, PullUp, PushPull, RTCPin, Unknown, IO},
     interrupt,
     ledc::{LSGlobalClkSource, LowSpeed, LEDC},
     macros::ram,
@@ -43,6 +43,7 @@ use hal::{
     Delay, Rng, Rtc,
 };
 use mqttrs::{decode_slice, encode_slice, Pid};
+use smoltcp::wire::Ipv4Address;
 
 const FLASH_ADDR: u32 = 0x9000;
 const INTERVAL_SEC: u64 = 60;
@@ -59,11 +60,62 @@ pub struct I2CADCRead {
     pub pressure_mv: u16,
 }
 
+impl I2CADCRead {
+    pub fn read(i2c: hal::i2c::I2C<'static, hal::peripherals::I2C0>) -> Self {
+        use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
+        let address = SlaveAddr::default();
+        let mut adc = Ads1x1x::new_ads1115(i2c, address);
+        adc.set_full_scale_range(FullScaleRange::Within6_144V)
+            .unwrap();
+        let a0 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA0)).unwrap();
+        let a1 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA1)).unwrap();
+        let a3 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA3)).unwrap();
+        Self {
+            battery_mv: Self::get_mv(a3),
+            ldo_inp_mv: Self::get_mv(a1),
+            pressure_mv: Self::get_mv(a0),
+        }
+    }
+
+    fn get_mv(val: i16) -> u16 {
+        if val < 0 {
+            0
+        } else {
+            (val as u32 * 3 / 16) as u16
+        }
+    }
+}
+
 #[derive(serde::Serialize, Clone, Copy, Debug, Default)]
 pub struct DeviceState {
     pub adc_state: I2CADCRead,
     pub n_pulses: u16,
     pub time_sec: u64,
+}
+
+impl DeviceState {
+    pub fn publish<'a, 'b>(
+        &self,
+        socket: &mut Socket<'a, 'b>,
+    ) -> Result<(), esp_wifi::wifi_interface::IoError> {
+        let mut buffer = [0u8; 10000];
+        let json = serde_json_core::to_string::<Self, 10000>(&self).unwrap();
+        let publish = mqttrs::Publish {
+            dup: false,
+            payload: json.as_bytes(),
+            qospid: mqttrs::QosPid::AtLeastOnce(Pid::new()),
+            retain: false,
+            topic_name: "jaedson/tocloud",
+        };
+        let size = encode_slice(&publish.into(), &mut buffer).unwrap();
+        socket.write_all(&buffer[..size])?;
+        socket.flush()?;
+        esp_println::println!("awaiting...");
+        let len = socket.read(&mut buffer).unwrap();
+        let decoded = decode_slice(&buffer[..len]).unwrap().unwrap();
+        esp_println::println!("{decoded:?}");
+        Ok(())
+    }
 }
 
 #[derive(Desse, DesseSized, Default)]
@@ -104,7 +156,6 @@ impl PersistentState {
         let mut flash = FlashStorage::new();
         let time = rtc.get_time_ms() / 1000 + INTERVAL_SEC / 2; // min interval of at least 50%
         let next_transmission = time + INTERVAL_SEC - time % INTERVAL_SEC;
-        println!("{time}, {next_transmission}, {INTERVAL_SEC}");
         let state = PersistentState {
             n_pulses: match new_pulses {
                 Some(v) => v,
@@ -183,23 +234,57 @@ fn entry() -> ! {
     start_boost_pwm(&ledc, io.pins.gpio23);
     let mut delay = Delay::new(&clocks);
     delay.delay_ms(500u32);
-    let adc_state = read_i2c_adc(i2c);
+    let adc_state = I2CADCRead::read(i2c);
     pressure_en_pin.set_low().unwrap();
     active_state_led.set_low().unwrap();
 
-    println!("preparing to send data...");
-
-    let timer_group = TimerGroup::new(peripherals.TIMG1, &clocks, &mut peripheral_clock_control);
-    let timer = timer_group.timer0;
-
-    let rng = Rng::new(peripherals.RNG);
-    let radio_control = system.radio_clock_control;
-    let init = initialize(EspWifiInitFor::Wifi, timer, rng, radio_control, &clocks).unwrap();
-
+    let timer = TimerGroup::new(peripherals.TIMG1, &clocks, &mut peripheral_clock_control).timer0;
+    let rng: Rng = Rng::new(peripherals.RNG);
     let (wifi, _) = peripherals.RADIO.split();
-    let mut socket_set_entries: [_; 3] = Default::default();
+    let radio_control = system.radio_clock_control;
+    let mut socket_set_entries: [smoltcp::iface::SocketStorage<'_>; 3] = Default::default();
+
+    let mut rx_buffer = [0u8; 1536];
+    let mut tx_buffer = [0u8; 1536];
+    let wifi_stack = connect_wifi(
+        timer,
+        rng,
+        wifi,
+        radio_control,
+        &clocks,
+        &mut socket_set_entries,
+    );
+    let mut socket = wifi_stack.get_socket(&mut rx_buffer, &mut tx_buffer);
+    socket.work();
+    socket.open(Ipv4Address::new(192, 168, 0, 114).into_address(), 1883).unwrap();
+
+    let new_charger_state = control_charger(
+        io.pins.gpio15.into_push_pull_output(),
+        adc_state.battery_mv,
+        persistent_state.charger_state,
+    );
+
+    let initial_pulses = persistent_state.n_pulses;
+    let sent_n_pulses =
+        connect_to_broker_and_publish_device_state(adc_state, initial_pulses, &mut socket, &rtc);
+
+    let aditional_pulses = ADITIONAL_PULSES.load(Ordering::Acquire);
+    let remaining_n_pulses = initial_pulses + aditional_pulses - sent_n_pulses;
+    let next = persistent_state.next(Some(remaining_n_pulses), Some(new_charger_state), &rtc);
+    go_sleep(&clocks, next.next_transmission, pulse_pin, rtc);
+}
+
+fn connect_wifi<'a>(
+    timer: hal::Timer<hal::timer::Timer0<hal::peripherals::TIMG1>>,
+    rng: Rng,
+    wifi: hal::radio::Wifi,
+    radio_control: hal::system::RadioClockControl,
+    clocks: &Clocks,
+    socket_set_entries: &'a mut [smoltcp::iface::SocketStorage<'a>; 3],
+) -> WifiStack<'a> {
+    let init = initialize(EspWifiInitFor::Wifi, timer, rng, radio_control, &clocks).unwrap();
     let (iface, device, mut controller, sockets) =
-        create_network_interface(&init, wifi, WifiMode::Sta, &mut socket_set_entries).unwrap();
+        create_network_interface(&init, wifi, WifiMode::Sta, socket_set_entries).unwrap();
     let wifi_stack = WifiStack::new(iface, device, sockets, current_millis);
 
     let client_config = Configuration::Client(ClientConfiguration {
@@ -228,7 +313,6 @@ fn entry() -> ! {
     }
     println!("{:?}", controller.is_connected());
 
-    // wait for getting an ip address
     println!("Wait to get an ip address");
     loop {
         wifi_stack.work();
@@ -239,33 +323,10 @@ fn entry() -> ! {
         }
     }
 
-    println!("preparing to send device state");
-    let mut rx_buffer = [0u8; 1536];
-    let mut tx_buffer = [0u8; 1536];
-    let mut socket = wifi_stack.get_socket(&mut rx_buffer, &mut tx_buffer);
-
-    let address = smoltcp::wire::Ipv4Address::new(192, 168, 0, 114); // 54, 80, 140, 156
-
-    socket.work();
-    socket.open(address.into_address(), 1883).unwrap();
-
-    let new_charger_state = control_charger(
-        io.pins.gpio15.into_push_pull_output(),
-        adc_state.battery_mv,
-        persistent_state.charger_state,
-    );
-
-    let initial_pulses = persistent_state.n_pulses;
-    let sent_n_pulses =
-        connect_to_broker_and_publish_device(adc_state, initial_pulses, &mut socket, &rtc);
-
-    let aditional_pulses = ADITIONAL_PULSES.load(Ordering::Acquire);
-    let remaining_n_pulses = initial_pulses + aditional_pulses - sent_n_pulses;
-    let next = persistent_state.next(Some(remaining_n_pulses), Some(new_charger_state), &rtc);
-    go_sleep(&clocks, next.next_transmission, pulse_pin, rtc);
+    wifi_stack
 }
 
-fn connect_to_broker_and_publish_device<'a, 'b>(
+fn connect_to_broker_and_publish_device_state<'a, 'b>(
     adc_state: I2CADCRead,
     initial_pulses: u16,
     socket: &mut Socket<'a, 'b>,
@@ -282,7 +343,7 @@ fn connect_to_broker_and_publish_device<'a, 'b>(
         time_sec: rtc.get_time_ms() / 1000,
     };
     println!("{device_state:?}");
-    if let Err(err) = publish_device_state(socket, device_state) {
+    if let Err(err) = device_state.publish(socket) {
         println!("error while sending state: {err:?}");
         return 0;
     }
@@ -380,53 +441,4 @@ fn connect_to_mqtt_broker<'a, 'b>(
     let decoded = decode_slice(&buffer).unwrap().unwrap();
     esp_println::println!("{decoded:?}");
     Ok(())
-}
-
-pub fn publish_device_state<'a, 'b>(
-    socket: &mut Socket<'a, 'b>,
-    device_state: DeviceState,
-) -> Result<(), esp_wifi::wifi_interface::IoError> {
-    let mut buffer = [0u8; 10000];
-    let json = serde_json_core::to_string::<DeviceState, 10000>(&device_state).unwrap();
-    let publish = mqttrs::Publish {
-        dup: false,
-        payload: json.as_bytes(),
-        qospid: mqttrs::QosPid::AtLeastOnce(Pid::new()),
-        retain: false,
-        topic_name: "jaedson/tocloud",
-    };
-    let size = encode_slice(&publish.into(), &mut buffer).unwrap();
-    socket.write_all(&buffer[..size])?;
-    socket.flush()?;
-    esp_println::println!("awaiting...");
-    let len = socket.read(&mut buffer).unwrap();
-    let decoded = decode_slice(&buffer[..len]).unwrap().unwrap();
-    esp_println::println!("{decoded:?}");
-    esp_println::println!("ok");
-    Ok(())
-}
-
-pub fn read_i2c_adc(i2c: hal::i2c::I2C<'static, hal::peripherals::I2C0>) -> I2CADCRead {
-    use ads1x1x::{Ads1x1x, FullScaleRange, SlaveAddr};
-
-    let get_mv = |val: i16| -> u16 {
-        if val < 0 {
-            0
-        } else {
-            (val as u32 * 3 / 16) as u16
-        }
-    };
-
-    let address = SlaveAddr::default();
-    let mut adc = Ads1x1x::new_ads1115(i2c, address);
-    adc.set_full_scale_range(FullScaleRange::Within6_144V)
-        .unwrap();
-    let a0 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA0)).unwrap();
-    let a1 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA1)).unwrap();
-    let a3 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA3)).unwrap();
-    I2CADCRead {
-        battery_mv: get_mv(a3),
-        ldo_inp_mv: get_mv(a1),
-        pressure_mv: get_mv(a0),
-    }
 }
