@@ -39,6 +39,7 @@ use hal::{
         get_wakeup_cause,
         sleep::{Ext0WakeupSource, TimerWakeupSource, WakeupLevel},
     },
+    timer::TimerGroup,
     Delay, Rng, Rtc,
 };
 use mqttrs::{decode_slice, encode_slice, Pid};
@@ -53,7 +54,6 @@ static ADITIONAL_PULSES: AtomicU16 = AtomicU16::new(0);
 
 #[derive(serde::Serialize, Clone, Copy, Debug, Default)]
 pub struct I2CADCRead {
-    pub battery_ma: i16,
     pub battery_mv: u16,
     pub ldo_inp_mv: u16,
     pub pressure_mv: u16,
@@ -95,14 +95,22 @@ impl PersistentState {
         counter
     }
 
-    pub fn next(&self, new_pulses: Option<u16>, new_charger_state: Option<bool>) -> Self {
+    pub fn next(
+        &self,
+        new_pulses: Option<u16>,
+        new_charger_state: Option<bool>,
+        rtc: &Rtc<'static>,
+    ) -> Self {
         let mut flash = FlashStorage::new();
+        let time = rtc.get_time_ms() / 1000;
+        let next_transmission = time + INTERVAL_SEC - time % INTERVAL_SEC;
+        println!("{time}, {next_transmission}, {INTERVAL_SEC}");
         let state = PersistentState {
             n_pulses: match new_pulses {
                 Some(v) => v,
                 None => self.n_pulses,
             },
-            next_transmission: self.next_transmission + INTERVAL_SEC,
+            next_transmission,
             charger_state: new_charger_state.unwrap_or(self.charger_state),
         };
         let bytes = state.serialize();
@@ -143,12 +151,14 @@ fn entry() -> ! {
     }
 
     // time to send data
-    let mut active_state_led = io.pins.gpio2.into_push_pull_output();
-    active_state_led.set_high().unwrap();
 
     let mut pulse_pin = io.pins.gpio12.into_pull_up_input();
     pulse_pin.listen(hal::gpio::Event::FallingEdge);
     interrupt::enable(peripherals::Interrupt::GPIO, interrupt::Priority::Priority1).unwrap();
+
+    let timer_group0 = TimerGroup::new(peripherals.TIMG0, &clocks, &mut peripheral_clock_control);
+    let mut wdt = timer_group0.wdt;
+    wdt.start(20u64.secs()); // prevent unknown stop
 
     interrupt::enable(
         peripherals::Interrupt::I2C_EXT0,
@@ -167,15 +177,22 @@ fn entry() -> ! {
     let mut ledc = LEDC::new(peripherals.LEDC, &clocks, &mut peripheral_clock_control);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
+    let mut active_state_led = io.pins.gpio2.into_push_pull_output();
+    active_state_led.set_high().unwrap();
     let mut pressure_en_pin = io.pins.gpio22.into_push_pull_output();
     pressure_en_pin.set_high().unwrap();
     start_boost_pwm(&ledc, io.pins.gpio23);
+    let mut delay = Delay::new(&clocks);
+    delay.delay_ms(500u32);
+    let adc_state = read_i2c_adc(i2c);
+    pressure_en_pin.set_low().unwrap();
+    active_state_led.set_low().unwrap();
 
     println!("preparing to send data...");
 
-    let timer =
-        hal::timer::TimerGroup::new(peripherals.TIMG1, &clocks, &mut peripheral_clock_control)
-            .timer0;
+    let timer_group = TimerGroup::new(peripherals.TIMG1, &clocks, &mut peripheral_clock_control);
+    let timer = timer_group.timer0;
+
     let rng = Rng::new(peripherals.RNG);
     let radio_control = system.radio_clock_control;
     let init = initialize(EspWifiInitFor::Wifi, timer, rng, radio_control, &clocks).unwrap();
@@ -224,7 +241,6 @@ fn entry() -> ! {
     }
 
     println!("preparing to send device state");
-
     let mut rx_buffer = [0u8; 1536];
     let mut tx_buffer = [0u8; 1536];
     let mut socket = wifi_stack.get_socket(&mut rx_buffer, &mut tx_buffer);
@@ -234,8 +250,6 @@ fn entry() -> ! {
     socket.work();
     socket.open(address.into_address(), 1883).unwrap();
 
-    let adc_state = read_i2c_adc(i2c);
-    pressure_en_pin.set_low().unwrap();
     let new_charger_state = control_charger(
         io.pins.gpio15.into_push_pull_output(),
         adc_state.battery_mv,
@@ -248,8 +262,7 @@ fn entry() -> ! {
 
     let aditional_pulses = ADITIONAL_PULSES.load(Ordering::Acquire);
     let remaining_n_pulses = initial_pulses + aditional_pulses - sent_n_pulses;
-    let next = persistent_state.next(Some(remaining_n_pulses), Some(new_charger_state));
-    active_state_led.set_low().unwrap();
+    let next = persistent_state.next(Some(remaining_n_pulses), Some(new_charger_state), &rtc);
     go_sleep(&clocks, next.next_transmission, wake_pin, rtc);
 }
 
@@ -294,22 +307,24 @@ fn go_sleep(
     let mut delay = Delay::new(&clocks);
     let remaining_time = next_transmission - time;
     let timer = TimerWakeupSource::new(core::time::Duration::from_secs(remaining_time));
+    println!("waking up in {remaining_time} seconds");
     let mut ext0_pin = wake_pin.into_pull_up_input();
     let ext0 = Ext0WakeupSource::new(&mut ext0_pin, WakeupLevel::Low);
     rtc.sleep_deep(&[&timer, &ext0], &mut delay);
 }
+
 pub fn control_charger(
     mut charger_en_pin: GpioPin<Output<PushPull>, 15>,
     battery_mv: u16,
     current_state: bool,
 ) -> bool {
-    if battery_mv > 4200 {
+    if battery_mv > 4250 {
         charger_en_pin.rtcio_pad_hold(false);
         charger_en_pin.set_low().unwrap();
         charger_en_pin.rtcio_pad_hold(true);
         println!("disabling charger");
         false
-    } else if battery_mv < 4150 && !current_state {
+    } else if battery_mv < 4100 && !current_state {
         charger_en_pin.rtcio_pad_hold(false);
         charger_en_pin.set_high().unwrap();
         charger_en_pin.rtcio_pad_hold(true);
@@ -358,7 +373,7 @@ fn connect_to_mqtt_broker<'a, 'b>(
         protocol: mqttrs::Protocol::MQTT311,
     };
     let size = encode_slice(&connect.into(), &mut buffer).unwrap();
-    socket.write(&buffer[..size])?;
+    socket.write_all(&buffer[..size])?;
     socket.flush()?;
 
     let mut buffer = [0u8; 512];
@@ -382,7 +397,7 @@ pub fn publish_device_state<'a, 'b>(
         topic_name: "jaedson/tocloud",
     };
     let size = encode_slice(&publish.into(), &mut buffer).unwrap();
-    socket.write(&buffer[..size])?;
+    socket.write_all(&buffer[..size])?;
     socket.flush()?;
     esp_println::println!("awaiting...");
     let len = socket.read(&mut buffer).unwrap();
@@ -407,13 +422,11 @@ pub fn read_i2c_adc(i2c: hal::i2c::I2C<'static, hal::peripherals::I2C0>) -> I2CA
     let mut adc = Ads1x1x::new_ads1115(i2c, address);
     adc.set_full_scale_range(FullScaleRange::Within6_144V)
         .unwrap();
-    let dif_a2_a3 = nb::block!(adc.read(&mut ads1x1x::channel::DifferentialA2A3)).unwrap();
     let a0 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA0)).unwrap();
     let a1 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA1)).unwrap();
-    let a2 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA2)).unwrap();
+    let a3 = nb::block!(adc.read(&mut ads1x1x::channel::SingleA3)).unwrap();
     I2CADCRead {
-        battery_ma: dif_a2_a3 / 8,
-        battery_mv: get_mv(a2),
+        battery_mv: get_mv(a3),
         ldo_inp_mv: get_mv(a1),
         pressure_mv: get_mv(a0),
     }
